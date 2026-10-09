@@ -354,14 +354,15 @@ class VideoDownloader:
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.STDOUT
         )
         
         # Basic progress monitoring parsing ffmpeg/yt-dlp output
         error_log = deque(maxlen=20)
+        last_pct = -1
         try:
             while True:
-                line = await process.stderr.readline()
+                line = await process.stdout.readline()
                 if not line:
                     break
                 line_str = line.decode(errors='replace').strip()
@@ -373,15 +374,17 @@ class VideoDownloader:
                             h, m_m, s = float(m.group(1)), float(m.group(2)), float(m.group(3))
                             curr = h * 3600 + m_m * 60 + s
                             pct = min(100, int((curr / duration_seconds) * 100))
-                            await progress_callback(pct)
+                            if pct > last_pct:
+                                await progress_callback(pct)
+                                last_pct = pct
                     elif progress_callback and is_hls:
                         # yt-dlp progress: [download]  50.0% of ~2.50GiB
                         m = re.search(r"\[download\]\s+(\d+\.?\d*)%", line_str)
-                        if not m:
-                            m = re.search(r"\[download\]\s+(\d+\.?\d*)%", (await process.stdout.readline()).decode(errors='replace').strip())
                         if m:
                             pct = min(100, int(float(m.group(1))))
-                            await progress_callback(pct)
+                            if pct > last_pct:
+                                await progress_callback(pct)
+                                last_pct = pct
 
             await asyncio.wait_for(process.wait(), timeout=settings.MAX_DURATION_SECONDS)
         except asyncio.TimeoutError:
