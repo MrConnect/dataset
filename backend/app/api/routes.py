@@ -1,7 +1,8 @@
 import shutil
+from pathlib import Path
 import uuid
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,40 @@ from app.services.source_resolver import BackendSourceResolver
 from app.workers.queue import JobWorkerQueue
 
 router = APIRouter(prefix="/api/v1")
+
+
+def _job_response(job: Job, segments: list[JobSegment]) -> JobDetailResponse:
+    return JobDetailResponse(
+        job_id=job.id,
+        schema_version=job.schema_version,
+        status=job.status,
+        page_url=job.page_url,
+        media_url=job.media_url,
+        media_type=job.media_type,
+        quality_height=job.quality_height,
+        duration_seconds=job.duration_seconds,
+        progress=job.progress,
+        error=job.error,
+        failure_code=job.failure_code,
+        acquisition_mode=job.acquisition_mode,
+        source_required=job.status == "awaiting_source",
+        segments_count=len(segments),
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        segments=[
+            SegmentResult(
+                id=segment.segment_id,
+                start_seconds=segment.start_seconds,
+                end_seconds=segment.end_seconds,
+                categories=segment.categories,
+                status=segment.status,
+                output_path=segment.output_path,
+                duration=segment.duration,
+                error=segment.error,
+            )
+            for segment in segments
+        ],
+    )
 
 
 @router.get("/health")
@@ -95,6 +130,8 @@ async def submit_job(
         quality_height=payload.quality.height,
         representation_id=payload.quality.representation_id,
         variant_url=payload.quality.variant_url,
+        source_headers=payload.source.headers,
+        acquisition_mode="server" if payload.source.acquisition_mode == "auto" else payload.source.acquisition_mode,
         duration_seconds=payload.source.duration_seconds,
         progress=0,
     )
@@ -160,34 +197,7 @@ async def get_job(
     res = await db.execute(select(JobSegment).where(JobSegment.job_id == job_id))
     segments = res.scalars().all()
 
-    return JobDetailResponse(
-        job_id=job.id,
-        schema_version=job.schema_version,
-        status=job.status,
-        page_url=job.page_url,
-        media_url=job.media_url,
-        media_type=job.media_type,
-        quality_height=job.quality_height,
-        duration_seconds=job.duration_seconds,
-        progress=job.progress,
-        error=job.error,
-        segments_count=len(segments),
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-        segments=[
-            SegmentResult(
-                id=s.segment_id,
-                start_seconds=s.start_seconds,
-                end_seconds=s.end_seconds,
-                categories=s.categories,
-                status=s.status,
-                output_path=s.output_path,
-                duration=s.duration,
-                error=s.error,
-            )
-            for s in segments
-        ],
-    )
+    return _job_response(job, list(segments))
 
 
 @router.get("/jobs", response_model=list[JobDetailResponse])
@@ -212,37 +222,57 @@ async def list_jobs(
     for job in jobs:
         seg_res = await db.execute(select(JobSegment).where(JobSegment.job_id == job.id))
         segments = seg_res.scalars().all()
-        results.append(
-            JobDetailResponse(
-                job_id=job.id,
-                schema_version=job.schema_version,
-                status=job.status,
-                page_url=job.page_url,
-                media_url=job.media_url,
-                media_type=job.media_type,
-                quality_height=job.quality_height,
-                duration_seconds=job.duration_seconds,
-                progress=job.progress,
-                error=job.error,
-                segments_count=len(segments),
-                created_at=job.created_at,
-                updated_at=job.updated_at,
-                segments=[
-                    SegmentResult(
-                        id=s.segment_id,
-                        start_seconds=s.start_seconds,
-                        end_seconds=s.end_seconds,
-                        categories=s.categories,
-                        status=s.status,
-                        output_path=s.output_path,
-                        duration=s.duration,
-                        error=s.error,
-                    )
-                    for s in segments
-                ],
-            )
-        )
+        results.append(_job_response(job, list(segments)))
     return results
+
+
+@router.post("/jobs/{job_id}/source", status_code=status.HTTP_202_ACCEPTED)
+async def upload_job_source(
+    job_id: str,
+    _auth: Annotated[str, Depends(verify_api_key)],
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+):
+    job = await db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.status in ("completed", "processing"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Job is already {job.status}")
+
+    suffix = Path(file.filename or "source.mp4").suffix.lower()
+    if suffix not in {".mp4", ".mkv", ".mov", ".webm", ".ts", ".m4v"}:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported video file type")
+
+    for previous in settings.temp_path.glob(f"{job_id}_uploaded_source.*"):
+        previous.unlink(missing_ok=True)
+    destination = settings.temp_path / f"{job_id}_uploaded_source{suffix}"
+    total = 0
+    try:
+        with destination.open("wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > settings.MAX_DOWNLOAD_SIZE_BYTES:
+                    raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Uploaded source is too large")
+                output.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+    job.source_file_path = str(destination)
+    job.acquisition_mode = "upload"
+    job.status = "queued"
+    job.progress = 0
+    job.error = None
+    job.failure_code = None
+    await db.commit()
+    if settings.CELERY_ENABLED:
+        from app.workers.celery_worker import process_video_job
+        process_video_job.delay(job.id)
+    else:
+        await JobWorkerQueue.enqueue_job(job.id)
+    return {"job_id": job.id, "status": "queued", "message": "Source uploaded; processing resumed"}
 
 
 @router.delete("/jobs/{job_id}")
@@ -257,7 +287,10 @@ async def delete_job(
     
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-        
+
+    if job.source_file_path:
+        Path(job.source_file_path).unlink(missing_ok=True)
+
     await db.delete(job)
     await db.commit()
     return {"ok": True}

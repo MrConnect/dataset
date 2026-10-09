@@ -10,6 +10,7 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
   const [jobs, setJobs] = useState<JobResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadingJob, setUploadingJob] = useState<string | null>(null);
 
   const fetchJobs = async () => {
     setLoading(true);
@@ -52,11 +53,25 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
     }
   };
 
+  const handleSourceUpload = async (jobId: string, file?: File) => {
+    if (!file) return;
+    setUploadingJob(jobId);
+    try {
+      await ApiClient.uploadJobSource(jobId, file);
+      await fetchJobs();
+    } catch (err: any) {
+      alert(`Source upload failed: ${err.message}`);
+    } finally {
+      setUploadingJob(null);
+    }
+  };
+
   const getStatusColor = (status: JobStatus) => {
     switch (status) {
       case 'completed': return 'var(--accent-green)';
       case 'failed': return 'var(--accent-red)';
       case 'cancelled': return '#64748b';
+      case 'awaiting_source': return 'var(--accent-amber)';
       case 'downloading':
       case 'processing': return '#38bdf8';
       default: return 'var(--accent-amber)';
@@ -128,6 +143,7 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {jobs.map((job) => {
               const isFinished = job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
+              const needsSource = job.status === 'awaiting_source' || job.source_required;
               return (
                 <div key={job.job_id} style={{ padding: '6px 8px', backgroundColor: 'var(--bg-primary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -148,9 +164,25 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
                   )}
 
                   {job.error && (
-                    <div style={{ color: 'var(--accent-red)', fontSize: '10px', marginTop: '2px', wordBreak: 'break-all' }}>
-                      Error: {job.error}
+                    <div style={{ color: needsSource ? 'var(--accent-amber)' : 'var(--accent-red)', fontSize: '10px', marginTop: '2px', wordBreak: 'break-word' }}>
+                      {needsSource ? 'Action required' : 'Error'}: {job.error}
                     </div>
+                  )}
+
+                  {needsSource && (
+                    <label className="btn btn-primary btn-sm" style={{ marginTop: '7px', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}>
+                      {uploadingJob === job.job_id ? 'Uploading source…' : 'Upload source and resume'}
+                      <input
+                        type="file"
+                        accept="video/*,.mkv,.ts"
+                        disabled={uploadingJob === job.job_id}
+                        style={{ display: 'none' }}
+                        onChange={(event) => {
+                          void handleSourceUpload(job.job_id, event.target.files?.[0]);
+                          event.target.value = '';
+                        }}
+                      />
+                    </label>
                   )}
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
@@ -171,9 +203,9 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
                       </button>
                       {!isFinished ? (
                         <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px', color: 'var(--accent-red)' }} onClick={() => handleCancelJob(job.job_id)}>Cancel</button>
-                      ) : (
+                      ) : isFinished ? (
                         <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px', color: 'var(--accent-red)' }} onClick={() => handleDeleteJob(job.job_id)}>Delete</button>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 </div>

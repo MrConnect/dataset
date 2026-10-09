@@ -4,6 +4,7 @@ import { DetectedSource } from '../types';
 export class NetworkMonitor {
   private static seenUrls = new Set<string>();
   private static tabSources = new Map<number, Map<string, DetectedSource>>();
+  private static requestHeaders = new Map<string, Record<string, string>>();
 
   static initialize(): void {
     if (typeof chrome === 'undefined' || !chrome.webRequest) {
@@ -11,12 +12,29 @@ export class NetworkMonitor {
       return;
     }
 
-    // Listen to network requests to detect media URLs
+    chrome.webRequest.onBeforeSendHeaders.addListener(
+      (details) => {
+        const captured: Record<string, string> = {};
+        for (const header of details.requestHeaders || []) {
+          const name = header.name.toLowerCase();
+          if (name === 'referer' || name === 'origin' || name === 'user-agent') {
+            if (header.value) captured[header.name] = header.value;
+          }
+        }
+        if (Object.keys(captured).length > 0) this.requestHeaders.set(details.requestId, captured);
+      },
+      { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other'] },
+      ['requestHeaders', 'extraHeaders']
+    );
+
+    // Classify the response after we know its final Content-Type.
     chrome.webRequest.onHeadersReceived.addListener(
       (details) => {
         if (details.tabId < 0) return;
 
         const url = details.url;
+        const capturedHeaders = this.requestHeaders.get(details.requestId) || {};
+        this.requestHeaders.delete(details.requestId);
         // Ignore chunk fragments
         if (
           url.includes('.ts?') ||
@@ -44,12 +62,17 @@ export class NetworkMonitor {
           const dedupKey = `${details.tabId}_${details.frameId}_${VideoSourceResolver.getDeduplicationKey(url)}`;
           if (!this.seenUrls.has(dedupKey)) {
             this.seenUrls.add(dedupKey);
-            this.handleDetectedSource(details.tabId, details.frameId, url, type, contentType, details.initiator);
+            this.handleDetectedSource(details.tabId, details.frameId, url, type, contentType, details.initiator, capturedHeaders);
           }
         }
       },
       { urls: ['<all_urls>'] },
       ['responseHeaders']
+    );
+
+    chrome.webRequest.onErrorOccurred.addListener(
+      (details) => this.requestHeaders.delete(details.requestId),
+      { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other'] }
     );
 
     // Clean cache when tabs are closed
@@ -69,16 +92,18 @@ export class NetworkMonitor {
     url: string,
     type: string,
     contentType?: string,
-    initiator?: string
+    initiator?: string,
+    capturedHeaders: Record<string, string> = {}
   ): Promise<void> {
     try {
       // 1. Get tab info to know page URL
       const tab = await chrome.tabs.get(tabId).catch(() => null);
       // Prioritize initiator over tab URL to ensure correct Referer for iframes (fixes VidTube 403)
-      const pageUrl = initiator || tab?.url || '';
+      const refererEntry = Object.entries(capturedHeaders).find(([name]) => name.toLowerCase() === 'referer');
+      const pageUrl = refererEntry?.[1] || initiator || tab?.url || '';
 
-      const headers: Record<string, string> = {};
-      if (pageUrl) {
+      const headers: Record<string, string> = { ...capturedHeaders };
+      if (pageUrl && !refererEntry) {
         headers['Referer'] = pageUrl;
       }
 
@@ -86,8 +111,8 @@ export class NetworkMonitor {
       const resolved = await VideoSourceResolver.resolveSource(url, pageUrl, {
         contentType,
         title: tab?.title || `Stream (${type.toUpperCase()})`,
+        headers,
       });
-      resolved.headers = headers;
 
       // 3. Save to in-memory map
       if (!this.tabSources.has(tabId)) {

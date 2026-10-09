@@ -267,7 +267,7 @@ class VideoDownloader:
                 validate_url_safety(str(resp.url))
 
                 total_bytes = 0
-                max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+                max_bytes = settings.MAX_DOWNLOAD_SIZE_BYTES
                 
                 content_length_str = resp.headers.get('Content-Length')
                 content_length = int(content_length_str) if content_length_str and content_length_str.isdigit() else None
@@ -280,7 +280,7 @@ class VideoDownloader:
                         if total_bytes > max_bytes:
                             destination.unlink(missing_ok=True)
                             raise ValueError(
-                                f"Downloaded file exceeded maximum allowed size of {settings.MAX_FILE_SIZE_MB}MB"
+                                f"Downloaded file exceeded maximum allowed size of {settings.MAX_DOWNLOAD_SIZE_BYTES} bytes"
                             )
                         f.write(chunk)
                         

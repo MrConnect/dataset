@@ -8,6 +8,7 @@ from app.models.job import Job, JobSegment
 from app.services.downloader import VideoDownloader
 from app.services.video_processor import VideoProcessor
 from app.services.storage_manager import StorageManager
+from app.services.download_errors import classify_download_error
 
 logger = logging.getLogger("worker")
 
@@ -61,6 +62,7 @@ class JobWorkerQueue:
     @classmethod
     async def _process_job(cls, job_id: str) -> None:
         source_path: Path | None = None
+        source_is_uploaded = False
         errors: list[str] = []
 
         async with AsyncSessionLocal() as session:
@@ -80,34 +82,62 @@ class JobWorkerQueue:
                 job.progress = 10
                 await session.commit()
 
-                headers = {"Referer": job.page_url} if job.page_url else {}
-
-                target_url, resolved_type, req_headers = await VideoDownloader.resolve_stream(
-                    media_url=job.media_url,
-                    media_type=job.media_type,
-                    variant_url=job.variant_url,
-                    headers=headers,
-                    target_height=job.quality_height,
-                )
+                headers = dict(job.source_headers or {})
+                if job.page_url and not any(key.lower() == "referer" for key in headers):
+                    headers["Referer"] = job.page_url
 
                 async def on_download_progress(pct: int):
                     job.progress = min(100, pct)
                     await session.commit()
                 
-                # Always download source file first (full caching for fast cuts)
-                logger.info(f"Job {job.id} downloading source video from {target_url[:80]}...")
-                source_path, probed_duration = await VideoDownloader.download_source(
-                    job_id=job.id,
-                    media_url=target_url,
-                    media_type=resolved_type,
-                    headers=req_headers,
-                    duration_seconds=job.duration_seconds,
-                    progress_callback=on_download_progress
-                )
-                headers_to_use = req_headers
+                if job.source_file_path:
+                    source_path = Path(job.source_file_path)
+                    source_is_uploaded = True
+                    if not source_path.exists():
+                        raise FileNotFoundError("Uploaded source file is missing. Upload it again to resume the job.")
+                    probed_duration = await VideoDownloader._probe_media(source_path)
+                    headers_to_use = {}
+                elif job.acquisition_mode == "upload":
+                    job.status = "awaiting_source"
+                    job.failure_code = "SOURCE_UPLOAD_REQUIRED"
+                    job.error = "Upload the source video to continue this job."
+                    job.progress = 0
+                    await session.commit()
+                    return
+                else:
+                    target_url, resolved_type, req_headers = await VideoDownloader.resolve_stream(
+                        media_url=job.media_url,
+                        media_type=job.media_type,
+                        variant_url=job.variant_url,
+                        headers=headers,
+                        target_height=job.quality_height,
+                    )
+                    logger.info(f"Job {job.id} downloading source video from {target_url[:80]}...")
+                    try:
+                        source_path, probed_duration = await VideoDownloader.download_source(
+                            job_id=job.id,
+                            media_url=target_url,
+                            media_type=resolved_type,
+                            headers=req_headers,
+                            duration_seconds=job.duration_seconds,
+                            progress_callback=on_download_progress
+                        )
+                    except Exception as source_error:
+                        failure = classify_download_error(source_error)
+                        if failure.source_required:
+                            job.status = "awaiting_source"
+                            job.failure_code = failure.code
+                            job.error = str(failure)
+                            job.progress = 0
+                            await session.commit()
+                            return
+                        raise failure from source_error
+                    headers_to_use = req_headers
 
                 if probed_duration and not job.duration_seconds:
                     job.duration_seconds = probed_duration
+                job.failure_code = None
+                job.error = None
 
                 if job.id in cls._cancelled_jobs:
                     job.status = "cancelled"
@@ -216,13 +246,15 @@ class JobWorkerQueue:
             except Exception as e:
                 logger.error(f"Job {job_id} processing failed: {e}", exc_info=True)
                 job.status = "failed"
-                job.error = str(e)
+                failure = classify_download_error(e)
+                job.failure_code = failure.code
+                job.error = str(failure)
                 job.progress = 100
                 await session.commit()
 
             finally:
                 # Cleanup downloaded source temp file if local Path
-                if source_path and isinstance(source_path, Path) and source_path.exists():
+                if source_path and not source_is_uploaded and isinstance(source_path, Path) and source_path.exists():
                     try:
                         source_path.unlink(missing_ok=True)
                     except Exception:

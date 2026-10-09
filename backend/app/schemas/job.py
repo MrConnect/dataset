@@ -10,6 +10,22 @@ class SourceSchema(BaseModel):
     type: str = Field(..., description="Type: mp4, hls, dash")
     duration_seconds: float | None = None
     headers: dict[str, str] | None = None
+    acquisition_mode: str = Field("auto", pattern=r"^(auto|server|upload)$")
+
+    @field_validator("headers")
+    @classmethod
+    def validate_headers(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        allowed = {"referer", "origin", "user-agent", "authorization", "cookie"}
+        cleaned: dict[str, str] = {}
+        for name, header_value in value.items():
+            if name.lower() not in allowed:
+                continue
+            if "\r" in name or "\n" in name or "\r" in header_value or "\n" in header_value:
+                raise ValueError("Header names and values cannot contain newlines")
+            cleaned[name] = header_value
+        return cleaned
 
 
 class QualitySelectionSchema(BaseModel):
@@ -77,6 +93,9 @@ class JobDetailResponse(BaseModel):
     duration_seconds: float | None = None
     progress: int = 0
     error: str | None = None
+    failure_code: str | None = None
+    acquisition_mode: str = "server"
+    source_required: bool = False
     segments_count: int
     created_at: datetime
     updated_at: datetime

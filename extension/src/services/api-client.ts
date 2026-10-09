@@ -54,7 +54,12 @@ export class ApiClient {
     }
   }
 
-  static async resolveSource(mediaUrl: string, type: string, pageUrl?: string): Promise<ResolveSourceResponse> {
+  static async resolveSource(
+    mediaUrl: string,
+    type: string,
+    pageUrl?: string,
+    sourceHeaders?: Record<string, string>
+  ): Promise<ResolveSourceResponse> {
     const baseUrl = await this.getBaseUrl();
     const headers = await this.getHeaders();
     const res = await fetch(`${baseUrl}/api/v1/sources/resolve`, {
@@ -64,6 +69,7 @@ export class ApiClient {
         media_url: mediaUrl,
         type,
         page_url: pageUrl,
+        headers: sourceHeaders,
       }),
     });
 
@@ -151,6 +157,22 @@ export class ApiClient {
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.detail || `Failed to delete job (${res.status})`);
+    }
+  }
+
+  static async uploadJobSource(jobId: string, file: File): Promise<void> {
+    const baseUrl = await this.getBaseUrl();
+    const settings = await StorageService.getSettings();
+    const body = new FormData();
+    body.append('file', file);
+    const res = await fetch(`${baseUrl}/api/v1/jobs/${encodeURIComponent(jobId)}/source`, {
+      method: 'POST',
+      headers: { 'X-API-Key': settings.api_key || '' },
+      body,
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || `Source upload failed (${res.status})`);
     }
   }
 }

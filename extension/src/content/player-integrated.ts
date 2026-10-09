@@ -413,7 +413,7 @@ export class PlayerIntegratedController {
     this.drawer.setSubmitting(true, 'Submitting job to server...');
 
     const payload = {
-      schema_version: '1.0',
+      schema_version: '2.0',
       source: {
         page_url: window.location.href,
         media_url: mediaUrl,

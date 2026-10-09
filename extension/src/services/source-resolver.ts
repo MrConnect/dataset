@@ -19,7 +19,12 @@ export class VideoSourceResolver {
       }
     }
 
-    if (cleanUrl.endsWith('.m3u8') || url.includes('.m3u8?') || url.includes('/hls/')) {
+    if (
+      cleanUrl.endsWith('.m3u8') ||
+      url.includes('.m3u8?') ||
+      url.includes('/hls/') ||
+      /\/(master|playlist|manifest)(?:[/.?]|$)/i.test(url)
+    ) {
       return 'hls';
     }
     if (cleanUrl.endsWith('.mpd') || url.includes('.mpd?') || url.includes('/dash/')) {
@@ -41,6 +46,7 @@ export class VideoSourceResolver {
       title?: string;
       videoIndex?: number;
       elementSelector?: string;
+      headers?: Record<string, string>;
     }
   ): Promise<DetectedSource> {
     const type = this.identifyType(mediaUrl, options?.contentType) || 'mp4';
@@ -50,7 +56,7 @@ export class VideoSourceResolver {
     let status: 'available' | 'requires_validation' | 'unsupported' = 'available';
 
     try {
-      const backendRes = await ApiClient.resolveSource(mediaUrl, type, pageUrl);
+      const backendRes = await ApiClient.resolveSource(mediaUrl, type, pageUrl, options?.headers);
       qualities = backendRes.qualities;
       status = backendRes.status;
       if (backendRes.duration_seconds && !options?.durationSeconds) {
@@ -84,6 +90,7 @@ export class VideoSourceResolver {
       video_index: options?.videoIndex,
       discovered_at: Date.now(),
       title: options?.title || `Video Source (${type.toUpperCase()})`,
+      headers: options?.headers,
     };
   }
 

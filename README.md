@@ -35,6 +35,18 @@ The system consists of two main components:
 
 ## Key Workflows & Features
 
+### Acquisition Architecture (Schema 2.0)
+
+Media acquisition and dataset processing are separate phases:
+
+1. The extension observes the real media request and preserves its `Referer`, `Origin`, and `User-Agent` context.
+2. The backend first attempts server-side acquisition for ordinary MP4, HLS, and DASH sources.
+3. Authentication, session, or IP-bound failures do not destroy the job. The job moves to `awaiting_source` with a stable failure code.
+4. The user uploads the source file from the Jobs panel. The same job resumes automatically and keeps its original segments and labels.
+5. Processing runs against a verified local source, so cutting and dataset storage are independent of the streaming provider.
+
+This design does not assume that every browser-visible stream can be fetched from a datacenter IP. Provider-specific behavior is contained in discovery; the processing pipeline stays provider-agnostic.
+
 ### 1. Standard Web Tagging
 1. User navigates to a supported streaming site.
 2. The extension detects the video player and overlays the tagging UI.

@@ -7,6 +7,7 @@ export type JobStatus =
   | 'resolving'
   | 'downloading'
   | 'processing'
+  | 'awaiting_source'
   | 'completed'
   | 'partially_completed'
   | 'failed'
@@ -67,13 +68,14 @@ export interface TaggingSession {
 }
 
 export interface JobPayload {
-  schema_version: '1.0';
+  schema_version: '2.0';
   source: {
     page_url: string;
     media_url: string;
     type: SourceType;
     duration_seconds?: number;
     headers?: Record<string, string>;
+    acquisition_mode?: 'auto' | 'server' | 'upload';
   };
   quality: {
     height?: number;
@@ -96,6 +98,9 @@ export interface JobResponse {
   created_at?: string;
   progress?: number;
   error?: string | null;
+  failure_code?: string | null;
+  acquisition_mode?: 'server' | 'upload';
+  source_required?: boolean;
   results?: {
     category_id: string;
     segment_id: string;
