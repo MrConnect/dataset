@@ -3,7 +3,7 @@ import { Category, ExtensionSettings, TaggingSession } from '../types';
 const DEFAULT_CATEGORIES: Category[] = [];
 
 const DEFAULT_SETTINGS: ExtensionSettings = {
-  api_base_url: 'http://localhost:8000',
+  api_base_url: 'https://dataset.mem-dev.uk',
   api_key: 'test_dev_key',
   default_quality_height: 720,
   default_category_id: 'person_walking',
