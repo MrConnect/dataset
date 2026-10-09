@@ -380,10 +380,15 @@ export class PlayerIntegratedController {
       this.segments = [...this.segments, ...mappedSegments];
       
       // Update the Video Player UI immediately
-      this.bar.updateState({ segmentsCount: this.segments.length });
+      this.syncComponents();
       this.drawer.updateData(this.segments, this.categories);
-      this.timeline.setSegments(this.segments);
       
+      // Save locally
+      chrome.runtime.sendMessage({
+        type: 'OVERLAY_SEGMENTS_UPDATED',
+        payload: { segments: this.segments, sourceId: this.activeSource?.id },
+      }).catch(() => {});
+
       return true;
     } catch (err: any) {
       console.error('Load imported segments error:', err);
