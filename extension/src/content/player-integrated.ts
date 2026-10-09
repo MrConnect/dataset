@@ -6,6 +6,7 @@ import { PlayerDrawer } from './player-drawer';
 import { injectPlayerStyles } from './player-styles';
 import { generateId } from '../utils/uuid';
 import { StorageService } from '../services/storage';
+import { ApiClient } from '../services/api-client';
 
 const PALETTE = ['#22c55e', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316', '#06b6d4'];
 
@@ -363,6 +364,62 @@ export class PlayerIntegratedController {
     });
 
     this.drawer.updateData(this.segments, this.categories);
+  }
+
+  public async submitImportedSegments(importedSegments: any[]): Promise<boolean> {
+    const mediaUrl = this.activeSource?.media_url || this.videoEl.currentSrc || this.videoEl.src;
+    if (!mediaUrl) {
+      alert('No video media URL identified for export.');
+      return false;
+    }
+
+    try {
+      this.isSubmitting = true;
+      this.bar.updateState({ isSubmitting: true });
+      this.drawer.setSubmitting(true, 'Importing and submitting job...');
+
+      // Transform imported segments to our format if needed
+      const mappedSegments = importedSegments.map(s => ({
+        id: 'seg_' + Math.random().toString(36).substr(2, 9),
+        start_seconds: s.start_seconds,
+        end_seconds: s.end_seconds,
+        categories: s.categories || (s.category ? [s.category] : []),
+        created_at: Date.now()
+      }));
+
+      const payload = {
+        schema_version: '1.0' as const,
+        source: {
+          page_url: window.location.href,
+          media_url: mediaUrl,
+          type: this.activeSource?.type || 'mp4',
+          duration_seconds: this.activeSource?.duration_seconds || this.videoEl.duration || undefined,
+          headers: this.activeSource?.headers || { Referer: window.location.href },
+        },
+        quality: {
+          height: this.selectedQuality?.height || 1080,
+          variant_url: this.selectedQuality?.variant_url || mediaUrl,
+        },
+        segments: mappedSegments,
+      };
+
+      await ApiClient.submitJob(payload);
+      
+      this.segments = [];
+      this.bar.updateState({ segmentsCount: 0 });
+      this.drawer.updateData(this.segments, this.categories);
+      this.timeline.setSegments([]);
+      
+      return true;
+    } catch (err: any) {
+      console.error('Submit imported error:', err);
+      alert('Failed to submit imported job: ' + err.message);
+      return false;
+    } finally {
+      this.isSubmitting = false;
+      this.bar.updateState({ isSubmitting: false });
+      this.drawer.setSubmitting(false);
+    }
   }
 
   public async submitJob(): Promise<void> {

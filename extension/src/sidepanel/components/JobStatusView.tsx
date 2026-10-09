@@ -58,14 +58,56 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
     }
   };
 
+  const handleImportJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const text = ev.target?.result as string;
+        const segments = JSON.parse(text);
+        if (!Array.isArray(segments)) throw new Error("JSON must be an array of segments");
+        
+        // Ask background script to grab the active tab's source and submit a job
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          const activeTab = tabs[0];
+          if (activeTab && activeTab.id) {
+            chrome.tabs.sendMessage(activeTab.id, {
+              type: 'IMPORT_JOB_JSON',
+              payload: { segments }
+            }, (response) => {
+              if (chrome.runtime.lastError || !response?.ok) {
+                alert("Failed to submit imported job. Make sure a video is currently open and detected in the active tab.");
+              } else {
+                alert("Job imported and submitted successfully!");
+                fetchJobs();
+              }
+            });
+          }
+        });
+      } catch (err: any) {
+        alert(`Failed to parse JSON: ${err.message}`);
+      }
+      e.target.value = ''; // reset
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
       <div className="card">
         <div className="card-title">
           <span>Backend Processing Jobs</span>
-          <button className="btn btn-secondary btn-sm" onClick={fetchJobs} disabled={loading}>
-            {loading ? 'Refreshing...' : 'Refresh'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0, background: 'var(--bg-hover)' }}>
+              Import JSON
+              <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportJson} />
+            </label>
+            <button className="btn btn-secondary btn-sm" onClick={fetchJobs} disabled={loading}>
+              {loading ? '...' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         {error && (

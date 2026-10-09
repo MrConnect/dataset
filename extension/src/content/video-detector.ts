@@ -126,6 +126,20 @@ class VideoDetector {
           break;
         }
 
+        case 'IMPORT_JOB_JSON': {
+          const { segments } = message.payload;
+          if (this.controllers.size > 0) {
+            // Grab the first controller (usually there is only 1 video)
+            const firstController = Array.from(this.controllers.values())[0];
+            firstController.submitImportedSegments(segments).then(success => {
+              sendResponse({ ok: success });
+            });
+          } else {
+            sendResponse({ ok: false });
+          }
+          return true; // Keep channel open for async response
+        }
+
         case 'GET_ACTIVE_TAB_DATA': {
           const sources = Array.from(this.detectedSources.values()).filter(
             (s) => !this.isHtmlPageUrl(s.media_url)
