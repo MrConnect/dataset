@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Test Page: Multiple Videos</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #1e293b; color: #f8fafc; padding: 30px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    video { width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+    .card { background: #0f172a; padding: 16px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h2>Multiple Videos Test Page</h2>
+  <p>Tests detection of multiple distinct videos on a single page.</p>
+  <div class="grid">
+    <div class="card">
+      <h3>Video 1: Big Buck Bunny</h3>
+      <video id="vid1" controls crossorigin="anonymous">
+        <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4">
+      </video>
+    </div>
+    <div class="card">
+      <h3>Video 2: Elephants Dream</h3>
+      <video id="vid2" controls crossorigin="anonymous">
+        <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4" type="video/mp4">
+      </video>
+    </div>
+  </div>
+</body>
+</html>

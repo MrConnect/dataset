@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "job_id": "job_f9b776c2aa4d",
+  "created_at": "2026-10-09T12:05:10.757299+00:00",
+  "source": {
+    "page_url": "https://updown.icu/embed-reikwlp4gvb7-1280x640.html",
+    "media_url": "https://serv-stream-cdn26.cdn-video.xyz/hls2/02/00080/kk4k61vpu5r5_,l,n,h,x,.urlset/master.m3u8?t=SPkNAgsMbbksktdGdTX7ubosrnH00wUj-N9k9h8FMNc&s=1791547112&e=86400&f=403841&srv=server-hls2-stream-ca27&i=0.0&sp=4000&p1=serv-stream-cdn26&p2=serv-stream-cdn26",
+    "media_type": "hls",
+    "duration_seconds": 2653.333333
+  },
+  "selected_quality": {
+    "height": 1080,
+    "representation_id": null
+  },
+  "categories_metadata": [],
+  "segments_count": 1,
+  "segments": [
+    {
+      "segment_id": "seg_f271d1128dc6",
+      "start_seconds": 1260.51,
+      "end_seconds": 1274.88,
+      "categories": [
+        "face_closeup"
+      ],
+      "status": "failed",
+      "error": "FFmpeg segment extraction failed: [tcp @ 000001e40f2ae100] Connection to tcp://dayt-fer-dw15.gamescdn.online:443 failed: Error number -138 occurred\r\n[in#0 @ 000001e40f2a7c40] Error opening input: Error number -138 occurred\r\nError opening input file https://dayt-fer-dw15.gamescdn.online/d/3cndy5dmmi3hdr7eamkkbpyuuq2e6roxrozw6zxszfgzu3y2slpk6os4oyudsf6yhqgzp6xl/video.mp4.\r\nError opening input files: Error number -138 occurred\r\n"
+    }
+  ],
+  "processing_errors": [
+    "Segment seg_f271d1128dc6 failed: FFmpeg segment extraction failed: [tcp @ 000001e40f2ae100] Connection to tcp://dayt-fer-dw15.gamescdn.online:443 failed: Error number -138 occurred\r\n[in#0 @ 000001e40f2a7c40] Error opening input: Error number -138 occurred\r\nError opening input file https://dayt-fer-dw15.gamescdn.online/d/3cndy5dmmi3hdr7eamkkbpyuuq2e6roxrozw6zxszfgzu3y2slpk6os4oyudsf6yhqgzp6xl/video.mp4.\r\nError opening input files: Error number -138 occurred\r\n"
+  ]
+}

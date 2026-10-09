@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Universal Video Segment Tagger — Test Suite Hub</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; padding: 40px; }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { color: #38bdf8; margin-bottom: 8px; }
+    p { color: #94a3b8; line-height: 1.5; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px; }
+    .card { background: #1e293b; border: 1px solid #334155; padding: 16px; border-radius: 8px; transition: transform 0.2s; text-decoration: none; color: inherit; display: block; }
+    .card:hover { transform: translateY(-2px); border-color: #38bdf8; }
+    .card h3 { margin-top: 0; color: #f1f5f9; display: flex; align-items: center; justify-content: space-between; }
+    .badge { padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .b-mp4 { background: #1e3a8a; color: #93c5fd; }
+    .b-hls { background: #701a75; color: #f0abfc; }
+    .b-dash { background: #064e3b; color: #6ee7b7; }
+    .b-spa { background: #78350f; color: #fde68a; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Video Segment Tagger — Test Matrix</h1>
+    <p>Use these test fixtures to verify automatic detection, stream parsing, timeline tagging, and Edge extension integration.</p>
+
+    <div class="grid">
+      <a href="direct-mp4.html" class="card">
+        <h3>Direct MP4 Video <span class="badge b-mp4">MP4</span></h3>
+        <p>Test detection of direct HTML5 MP4 video, duration extraction, seeking and segment extraction.</p>
+      </a>
+
+      <a href="hls-test.html" class="card">
+        <h3>HLS Master Playlist <span class="badge b-hls">HLS / M3U8</span></h3>
+        <p>Test detection of live/VOD HLS streams, master playlist parsing, and quality variant extraction.</p>
+      </a>
+
+      <a href="dash-test.html" class="card">
+        <h3>MPEG-DASH Stream <span class="badge b-dash">DASH / MPD</span></h3>
+        <p>Test detection of DASH XML MPD manifests, representation parsing, and adaptation sets.</p>
+      </a>
+
+      <a href="multi-video.html" class="card">
+        <h3>Multiple Videos <span class="badge b-mp4">Multi-Stream</span></h3>
+        <p>Test detection and switching when multiple video players exist on the same page.</p>
+      </a>
+
+      <a href="spa-mock.html" class="card">
+        <h3>Dynamic SPA Navigation <span class="badge b-spa">SPA History</span></h3>
+        <p>Test video detection across dynamic client-side SPA route transitions and DOM mutations.</p>
+      </a>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Test Page: MPEG-DASH Stream</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #1e293b; color: #f8fafc; padding: 30px; }
+    .container { max-width: 800px; margin: 0 auto; }
+    video { width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+    .badge { background: #064e3b; color: #6ee7b7; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+  </style>
+  <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h2>MPEG-DASH Stream Test <span class="badge">DASH / MPD</span></h2>
+    <p>This page streams a DASH MPD presentation.</p>
+    <video id="player" controls crossorigin="anonymous"></video>
+  </div>
+  <script>
+    const url = "https://dash.akamaized.net/akamai/test/caption_test/bunny_test.mpd";
+    const player = dashjs.MediaPlayer().create();
+    player.initialize(document.querySelector("#player"), url, true);
+  </script>
+</body>
+</html>

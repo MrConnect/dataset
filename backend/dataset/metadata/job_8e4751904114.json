@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "job_id": "job_8e4751904114",
+  "created_at": "2026-10-09T12:54:42.782452+00:00",
+  "source": {
+    "page_url": "https://down.vidtube.one/embed-kk4k61vpu5r5.html",
+    "media_url": "https://serv-stream-cdn20.cdn-video.xyz/hls2/02/00080/kk4k61vpu5r5_,l,n,h,x,.urlset/master.m3u8?t=DdGamixfmpfX9tgCEpmiuUKAxg5NwbjY891qM7Ssmac&s=1791550318&e=86400&f=403841&srv=server-hls2-stream-ca27&i=0.0&sp=4000&p1=serv-stream-cdn20&p2=serv-stream-cdn20",
+    "media_type": "hls",
+    "duration_seconds": 2653.1920000000114
+  },
+  "selected_quality": {
+    "height": 1080,
+    "representation_id": null
+  },
+  "categories_metadata": [],
+  "segments_count": 1,
+  "segments": [
+    {
+      "segment_id": "seg_2d92beb1466e",
+      "start_seconds": 1259.56,
+      "end_seconds": 1273.17,
+      "actual_duration": 6.979875,
+      "categories": [
+        "person_walking"
+      ],
+      "output_files": [
+        "dataset\\person_walking\\job_8e4751904114_seg_2d92beb1466e.mp4"
+      ],
+      "status": "completed"
+    }
+  ],
+  "processing_errors": []
+}

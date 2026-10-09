@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "job_id": "job_6d71a9cbf2ea",
+  "created_at": "2026-10-09T12:28:35.124143+00:00",
+  "source": {
+    "page_url": "https://down.vidtube.one/embed-kk4k61vpu5r5.html",
+    "media_url": "https://serv-stream-cdn6.cdn-video.xyz/hls2/02/00080/kk4k61vpu5r5_n/index-v1-a1.m3u8?t=mA2a2abEoPGo1szWWp5B-XoQzNm_nCylAo2tmlMJgs8&s=1791548645&e=86400&f=403841&srv=server-hls2-stream-ca27&i=0.0&sp=4000&p1=serv-stream-cdn6&p2=serv-stream-cdn6",
+    "media_type": "hls",
+    "duration_seconds": 2653.1920000000114
+  },
+  "selected_quality": {
+    "height": 720,
+    "representation_id": null
+  },
+  "categories_metadata": [],
+  "segments_count": 1,
+  "segments": [
+    {
+      "segment_id": "seg_4d018804ebc3",
+      "start_seconds": 1260.75,
+      "end_seconds": 1273.5,
+      "categories": [
+        "person_walking"
+      ],
+      "status": "failed",
+      "error": "Process timed out after 180.0 seconds"
+    }
+  ],
+  "processing_errors": [
+    "Segment seg_4d018804ebc3 failed: Process timed out after 180.0 seconds"
+  ]
+}

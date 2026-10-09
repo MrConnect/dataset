@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Test Page: Dynamic SPA Video</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #1e293b; color: #f8fafc; padding: 30px; }
+    .nav { display: flex; gap: 10px; margin-bottom: 20px; }
+    button { background: #3b82f6; border: none; color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+    video { width: 100%; max-width: 700px; border-radius: 8px; margin-top: 15px; }
+    #view { background: #0f172a; padding: 20px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h2>Dynamic SPA Navigation Test</h2>
+  <p>Tests detection when navigating between SPA views without page reload.</p>
+  <div class="nav">
+    <button onclick="navigate('clip1')">Load Scene 1 (ForBiggerBlazes)</button>
+    <button onclick="navigate('clip2')">Load Scene 2 (ForBiggerEscapes)</button>
+  </div>
+  <div id="view">
+    <h3 id="scene-title">Scene 1</h3>
+    <div id="video-mount"></div>
+  </div>
+
+  <script>
+    const clips = {
+      clip1: {
+        title: "For Bigger Blazes",
+        src: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+      },
+      clip2: {
+        title: "For Bigger Escapes",
+        src: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4"
+      }
+    };
+
+    function navigate(sceneId) {
+      history.pushState({ scene: sceneId }, "", `#${sceneId}`);
+      renderScene(sceneId);
+    }
+
+    function renderScene(sceneId) {
+      const data = clips[sceneId] || clips.clip1;
+      document.getElementById('scene-title').textContent = data.title;
+      const mount = document.getElementById('video-mount');
+      mount.innerHTML = `<video controls autoplay crossorigin="anonymous"><source src="${data.src}" type="video/mp4"></video>`;
+    }
+
+    // Initial render
+    renderScene('clip1');
+  </script>
+</body>
+</html>

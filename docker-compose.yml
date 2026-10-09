@@ -1,0 +1,86 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: video-tagger-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - API_KEY=${API_KEY:-test_dev_key}
+      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:////app/storage/tagger.db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DATASET_DIR=/app/dataset
+      - BASE_STORAGE_DIR=/app/storage
+      - TEMP_DIR=/app/storage/temp
+      - ALLOW_LOCAL_NETWORK=${ALLOW_LOCAL_NETWORK:-false}
+      - CELERY_ENABLED=${CELERY_ENABLED:-false}
+    volumes:
+      - dataset_data:/app/dataset
+      - storage_data:/app/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - tagger-network
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: video-tagger-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "app.workers.celery_worker.celery_app", "worker", "--loglevel=info", "-c", "2"]
+    environment:
+      - API_KEY=${API_KEY:-test_dev_key}
+      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:////app/storage/tagger.db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DATASET_DIR=/app/dataset
+      - BASE_STORAGE_DIR=/app/storage
+      - TEMP_DIR=/app/storage/temp
+      - ALLOW_LOCAL_NETWORK=${ALLOW_LOCAL_NETWORK:-false}
+      - CELERY_ENABLED=true
+    volumes:
+      - dataset_data:/app/dataset
+      - storage_data:/app/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - tagger-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: video-tagger-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tagger-network
+
+volumes:
+  dataset_data:
+    driver: local
+  storage_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  tagger-network:
+    driver: bridge

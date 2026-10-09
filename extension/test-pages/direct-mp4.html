@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Test Page: Direct MP4 Video</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #1e293b; color: #f8fafc; padding: 30px; }
+    .container { max-width: 800px; margin: 0 auto; }
+    video { width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+    .badge { background: #1e3a8a; color: #93c5fd; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Direct MP4 Video Test <span class="badge">MP4</span></h2>
+    <p>This page serves a standard direct MP4 HTML5 video tag.</p>
+    <video id="player" controls crossorigin="anonymous">
+      <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4">
+      Your browser does not support HTML5 video.
+    </video>
+  </div>
+</body>
+</html>

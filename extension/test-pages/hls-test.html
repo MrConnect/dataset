@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Test Page: HLS Stream</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #1e293b; color: #f8fafc; padding: 30px; }
+    .container { max-width: 800px; margin: 0 auto; }
+    video { width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+    .badge { background: #701a75; color: #f0abfc; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+  <div class="container">
+    <h2>HLS Stream Test <span class="badge">HLS / M3U8</span></h2>
+    <p>This page streams an HLS Master Playlist using HLS.js.</p>
+    <video id="player" controls crossorigin="anonymous"></video>
+  </div>
+  <script>
+    const video = document.getElementById('player');
+    const hlsUrl = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8';
+    if (Hls.isSupported()) {
+      const hls = new Hls();
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(video);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = hlsUrl;
+    }
+  </script>
+</body>
+</html>

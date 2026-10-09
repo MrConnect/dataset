@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "job_id": "job_47e7250d6d9c",
+  "created_at": "2026-10-09T11:50:37.305022+00:00",
+  "source": {
+    "page_url": "https://web.topcinema.io/%d9%85%d8%b3%d9%84%d8%b3%d9%84-er-%d8%a7%d9%84%d9%85%d9%88%d8%b3%d9%85-%d8%a7%d9%84%d8%a7%d9%88%d9%84-%d8%a7%d9%84%d8%ad%d9%84%d9%82%d8%a9-6-%d9%85%d8%aa%d8%b1%d8%ac%d9%85%d8%a9/watch/",
+    "media_url": "https://down.vidtube.one/embed-kk4k61vpu5r5.html",
+    "media_type": "hls",
+    "duration_seconds": null
+  },
+  "selected_quality": {
+    "height": null,
+    "representation_id": null
+  },
+  "categories_metadata": [],
+  "segments_count": 1,
+  "segments": [
+    {
+      "segment_id": "seg_topcinema_er_01",
+      "start_seconds": 15.0,
+      "end_seconds": 20.0,
+      "categories": [
+        "medical_action",
+        "er_scene"
+      ],
+      "status": "failed",
+      "error": "FFmpeg segment extraction failed: [out#0/mp4 @ 0000021cff343040] Output file does not contain any stream\r\nError opening output file storage\\temp\\job_47e7250d6d9c_seg_topcinema_er_01_cut.mp4.\r\nError opening output files: Invalid argument\r\n"
+    }
+  ],
+  "processing_errors": [
+    "Segment seg_topcinema_er_01 failed: FFmpeg segment extraction failed: [out#0/mp4 @ 0000021cff343040] Output file does not contain any stream\r\nError opening output file storage\\temp\\job_47e7250d6d9c_seg_topcinema_er_01_cut.mp4.\r\nError opening output files: Invalid argument\r\n"
+  ]
+}

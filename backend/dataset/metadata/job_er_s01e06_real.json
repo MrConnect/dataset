@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "job_id": "job_er_s01e06_real",
+  "created_at": "2026-10-09T10:41:41.616534+00:00",
+  "source": {
+    "page_url": "https://web.topcinema.io/%d9%85%d8%b3%d9%84%d8%b3%d9%84-er-%d8%a7%d9%84%d9%85%d9%88%d8%b3%d9%85-%d8%a7%d9%84%d8%a7%d9%88%d9%84-%d8%a7%d9%84%d8%ad%d9%84%d9%82%d8%a9-6-%d9%85%d8%aa%d8%b1%d8%ac%d9%85%d8%a9/watch/",
+    "media_url": "https://serv-stream-cdn39.cdn-video.xyz/hls2/02/00080/evw9imgc3bii_,l,n,h,x,.urlset/master.m3u8",
+    "media_type": "hls",
+    "duration_seconds": 2880.0
+  },
+  "selected_quality": {
+    "height": 1080,
+    "bandwidth": 2676751
+  },
+  "categories_metadata": [
+    {
+      "id": "medical_emergency",
+      "name": "Medical Emergency",
+      "color": "#EF4444"
+    },
+    {
+      "id": "hospital_scene",
+      "name": "Hospital Scene",
+      "color": "#3B82F6"
+    }
+  ],
+  "segments_count": 1,
+  "segments": [
+    {
+      "segment_id": "seg_001_intro",
+      "start_seconds": 10.0,
+      "end_seconds": 15.0,
+      "actual_duration": 5.005,
+      "categories": [
+        "medical_emergency",
+        "hospital_scene"
+      ],
+      "output_files": [
+        "dataset\\medical_emergency\\job_er_s01e06_real_seg_001_intro.mp4",
+        "dataset\\hospital_scene\\job_er_s01e06_real_seg_001_intro.mp4"
+      ],
+      "status": "completed"
+    }
+  ],
+  "processing_errors": []
+}
