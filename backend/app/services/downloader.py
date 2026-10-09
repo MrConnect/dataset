@@ -248,7 +248,8 @@ class VideoDownloader:
             headers=headers,
         )
 
-        output_file = settings.temp_path / f"{job_id}_source.mp4"
+        ext = ".ts" if (media_type == "hls" or ".m3u8" in target_url) else ".mp4"
+        output_file = settings.temp_path / f"{job_id}_source{ext}"
 
         if media_type in ("hls", "dash") or target_url.endswith(".m3u8") or ".m3u8" in target_url or ".mpd" in target_url:
             await VideoDownloader._download_via_ffmpeg(target_url, output_file, req_headers, duration_seconds, progress_callback)
