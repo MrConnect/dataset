@@ -11,7 +11,7 @@ import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.db.session import get_db
-from app.models.category import Category
+from app.models.job import CategoryModel
 from app.config import settings
 
 router = APIRouter()
@@ -51,7 +51,7 @@ async def list_dataset(db: AsyncSession = Depends(get_db)):
     categories = []
     
     # Map DB category IDs to their real names
-    db_res = await db.execute(select(Category))
+    db_res = await db.execute(select(CategoryModel))
     db_categories = {c.id: c.name for c in db_res.scalars().all()}
     
     # 1. Standard Dataset Categories
