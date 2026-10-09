@@ -148,7 +148,8 @@ class JobWorkerQueue:
 
                 expected_duration = job.duration_seconds
                 job.duration_seconds = probed_duration
-                if expected_duration and probed_duration + max(5.0, expected_duration * 0.02) < expected_duration:
+                # Relaxed duration check: allow up to 10% or 120s difference (accounts for intro/outro ads in browser player)
+                if expected_duration and probed_duration + max(120.0, expected_duration * 0.10) < expected_duration:
                     raise ValueError(
                         f"Downloaded source is incomplete or mismatched: playable video is {probed_duration:.2f}s "
                         f"but the browser reported {expected_duration:.2f}s. Inspect {source_path.name} in Source Downloads."
