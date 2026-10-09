@@ -12,26 +12,28 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
   const [error, setError] = useState<string | null>(null);
   const [uploadingJob, setUploadingJob] = useState<string | null>(null);
 
-  const fetchJobs = async () => {
-    setLoading(true);
-    setError(null);
+  const fetchJobs = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     try {
       const list = await ApiClient.listJobs(10, 0);
       setJobs(list);
+      setError(null);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch jobs from backend');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchJobs();
-    const interval = setInterval(() => {
-      // Poll active jobs
-      fetchJobs();
-    }, 4000);
-    return () => clearInterval(interval);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await fetchJobs(false);
+      if (!stopped) timer = setTimeout(poll, 5000);
+    };
+    void fetchJobs().finally(() => { if (!stopped) timer = setTimeout(poll, 5000); });
+    return () => { stopped = true; clearTimeout(timer); };
   }, [lastSubmittedJobId]);
 
   const handleCancelJob = async (jobId: string) => {
@@ -123,7 +125,7 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
               Import JSON
               <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportJson} />
             </label>
-            <button className="btn btn-secondary btn-sm" onClick={fetchJobs} disabled={loading}>
+            <button className="btn btn-secondary btn-sm" onClick={() => void fetchJobs()} disabled={loading}>
               <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
             </button>
           </div>
@@ -191,9 +193,8 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
                     </div>
                     <div style={{ display: 'flex', gap: '6px' }}>
                       <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px' }} onClick={() => {
-                        const jobData = job as any;
-                        if (jobData.segments && jobData.segments.length > 0) {
-                          const exportData = jobData.segments.map((s: any) => ({ start_seconds: s.start_seconds, end_seconds: s.end_seconds, categories: s.categories }));
+                        if (job.segments && job.segments.length > 0) {
+                          const exportData = job.segments.map((s) => ({ start_seconds: s.start_seconds, end_seconds: s.end_seconds, categories: s.categories }));
                           const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
                           const url = URL.createObjectURL(blob);
                           const a = document.createElement('a'); a.href = url; a.download = `${job.job_id}_export.json`; a.click(); URL.revokeObjectURL(url);

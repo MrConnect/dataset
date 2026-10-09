@@ -34,3 +34,41 @@ async def test_duplicate_upload_is_rejected(client, monkeypatch, tmp_path: Path)
     assert first.status_code == 200
     assert first.json()["size"] == 5
     assert second.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_system_database_cannot_be_deleted_or_moved(client):
+    deleted = await client.delete("/api/v1/dataset/_database/tagger.db")
+    moved = await client.post(
+        "/api/v1/dataset/move",
+        json={"old_category": "_database", "old_filename": "tagger.db", "new_category": "archive", "new_filename": "tagger.db"},
+    )
+
+    assert deleted.status_code == 403
+    assert moved.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_and_move(client, monkeypatch, tmp_path: Path):
+    from app.api import dataset
+
+    dataset_dir = tmp_path / "dataset"
+    monkeypatch.setattr(dataset.settings, "DATASET_DIR", str(dataset_dir))
+    source = dataset_dir / "source"
+    source.mkdir(parents=True)
+    (source / "one.mp4").write_bytes(b"one")
+    (source / "two.mp4").write_bytes(b"two")
+
+    moved = await client.post(
+        "/api/v1/dataset/bulk/move",
+        json={"files": [{"category": "source", "filename": "one.mp4"}], "new_category": "target"},
+    )
+    deleted = await client.post(
+        "/api/v1/dataset/bulk/delete",
+        json={"files": [{"category": "source", "filename": "two.mp4"}]},
+    )
+
+    assert moved.status_code == 200
+    assert (dataset_dir / "target" / "one.mp4").read_bytes() == b"one"
+    assert deleted.status_code == 200
+    assert not (source / "two.mp4").exists()

@@ -11,6 +11,24 @@ export interface ResolveSourceResponse {
 }
 
 export class ApiClient {
+  private static async responseError(res: Response, fallback: string): Promise<Error> {
+    const requestId = res.headers.get('x-request-id');
+    let detail = '';
+    try {
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const body = await res.json();
+        detail = typeof body?.detail === 'string' ? body.detail : JSON.stringify(body?.detail || body);
+      } else {
+        detail = (await res.text()).trim();
+      }
+    } catch {
+      // Use the HTTP status fallback below.
+    }
+    const suffix = requestId ? ` [${requestId}]` : '';
+    return new Error(`${detail || fallback} (HTTP ${res.status})${suffix}`);
+  }
+
   private static async getHeaders(): Promise<HeadersInit> {
     const settings = await StorageService.getSettings();
     return {
@@ -74,8 +92,7 @@ export class ApiClient {
     });
 
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.detail || `Source resolution failed (${res.status})`);
+      throw await this.responseError(res, 'Source resolution failed');
     }
 
     return await res.json();
@@ -90,9 +107,8 @@ export class ApiClient {
       body: JSON.stringify(payload),
     });
 
-    if (!res.ok && res.status !== 202) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.detail || `Job submission failed (${res.status})`);
+    if (!res.ok) {
+      throw await this.responseError(res, 'Job submission failed');
     }
 
     return await res.json();
@@ -107,8 +123,7 @@ export class ApiClient {
     });
 
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.detail || `Failed to fetch job (${res.status})`);
+      throw await this.responseError(res, 'Failed to fetch job');
     }
 
     return await res.json();
@@ -123,8 +138,7 @@ export class ApiClient {
     });
 
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.detail || `Failed to list jobs (${res.status})`);
+      throw await this.responseError(res, 'Failed to list jobs');
     }
 
     return await res.json();
@@ -139,8 +153,7 @@ export class ApiClient {
     });
 
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.detail || `Failed to cancel job (${res.status})`);
+      throw await this.responseError(res, 'Failed to cancel job');
     }
 
     return await res.json();
@@ -155,8 +168,7 @@ export class ApiClient {
     });
 
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.detail || `Failed to delete job (${res.status})`);
+      throw await this.responseError(res, 'Failed to delete job');
     }
   }
 
@@ -171,8 +183,7 @@ export class ApiClient {
       body,
     });
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.detail || `Source upload failed (${res.status})`);
+      throw await this.responseError(res, 'Source upload failed');
     }
   }
 }

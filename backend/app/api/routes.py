@@ -1,9 +1,11 @@
 import shutil
+import os
 from pathlib import Path
 import uuid
 from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import desc, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -65,13 +67,19 @@ async def health_check():
     """
     ffmpeg_available = bool(shutil.which("ffmpeg"))
     ffprobe_available = bool(shutil.which("ffprobe"))
-    storage_writable = settings.dataset_path.exists() and settings.temp_path.exists()
+    storage_writable = all(os.access(path, os.W_OK) for path in (settings.dataset_path, settings.temp_path))
+    database_writable = True
+    if settings.DATABASE_URL.startswith("sqlite"):
+        database_value = settings.DATABASE_URL.split("///", 1)[-1]
+        database_path = Path(database_value)
+        database_writable = database_path.exists() and os.access(database_path, os.W_OK) and os.access(database_path.parent, os.W_OK)
 
     return {
-        "status": "healthy" if (ffmpeg_available and ffprobe_available and storage_writable) else "degraded",
+        "status": "healthy" if (ffmpeg_available and ffprobe_available and storage_writable and database_writable) else "degraded",
         "ffmpeg": "available" if ffmpeg_available else "missing",
         "ffprobe": "available" if ffprobe_available else "missing",
         "storage": "writable" if storage_writable else "unavailable",
+        "database": "writable" if database_writable else "unavailable",
         "accurate_cutting": settings.ACCURATE_CUTTING,
         "celery_enabled": settings.CELERY_ENABLED,
     }
@@ -120,6 +128,14 @@ async def submit_job(
 
     job_id = f"job_{uuid.uuid4().hex[:12]}"
 
+    # Read category state before adding pending rows. This prevents a lookup from
+    # triggering an early autoflush and gives database failures one clear path.
+    existing_category_ids: set[str] = set()
+    if payload.categories_metadata:
+        ids = [category.id for category in payload.categories_metadata]
+        existing_res = await db.execute(select(CategoryModel.id).where(CategoryModel.id.in_(ids)))
+        existing_category_ids = set(existing_res.scalars().all())
+
     job = Job(
         id=job_id,
         schema_version=payload.schema_version,
@@ -152,8 +168,7 @@ async def submit_job(
     # Sync categories metadata if provided
     if payload.categories_metadata:
         for cat in payload.categories_metadata:
-            existing = await db.get(CategoryModel, cat.id)
-            if not existing:
+            if cat.id not in existing_category_ids:
                 db.add(
                     CategoryModel(
                         id=cat.id,
@@ -164,7 +179,14 @@ async def submit_job(
                     )
                 )
 
-    await db.commit()
+    try:
+        await db.commit()
+    except OperationalError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job database is temporarily unavailable. Please retry after checking server storage.",
+        ) from exc
 
     # Enqueue to background worker
     if settings.CELERY_ENABLED:

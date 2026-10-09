@@ -20,11 +20,11 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     refreshTabData();
-    const interval = setInterval(() => {
-      refreshTabData();
-    }, 2000);
-
-    return () => clearInterval(interval);
+    const handleChange = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (changes.categories) void refreshTabData();
+    };
+    chrome.storage.onChanged.addListener(handleChange);
+    return () => chrome.storage.onChanged.removeListener(handleChange);
   }, []);
 
   const handleSaveCategories = async (updatedCategories: Category[]) => {

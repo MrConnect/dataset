@@ -101,6 +101,16 @@ export interface JobResponse {
   failure_code?: string | null;
   acquisition_mode?: 'server' | 'upload';
   source_required?: boolean;
+  segments?: {
+    id: string;
+    start_seconds: number;
+    end_seconds: number;
+    categories: string[];
+    status: string;
+    output_path?: string | null;
+    duration?: number | null;
+    error?: string | null;
+  }[];
   results?: {
     category_id: string;
     segment_id: string;

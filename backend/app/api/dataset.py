@@ -47,6 +47,16 @@ class MoveVideoRequest(BaseModel):
     new_category: str
     new_filename: str
 
+class DatasetFileRef(BaseModel):
+    category: str
+    filename: str
+
+class BulkFileRequest(BaseModel):
+    files: list[DatasetFileRef]
+
+class BulkMoveRequest(BulkFileRequest):
+    new_category: str
+
 def get_dataset_dir() -> Path:
     d = Path(settings.DATASET_DIR)
     d.mkdir(parents=True, exist_ok=True)
@@ -78,6 +88,10 @@ def get_target_path(category: str, filename: str = "") -> Path:
     if filename:
         return d / filename
     return d
+
+def ensure_mutable_category(category: str) -> None:
+    if category == "_database":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="System database cannot be modified")
 
 @router.get("/")
 async def list_dataset(db: AsyncSession = Depends(get_db)):
@@ -146,18 +160,62 @@ async def list_dataset(db: AsyncSession = Depends(get_db)):
             
     return {"categories": categories}
 
+@router.post("/bulk/delete")
+async def delete_videos(req: BulkFileRequest):
+    if not req.files:
+        raise HTTPException(status_code=400, detail="No files selected")
+    for item in req.files:
+        ensure_mutable_category(item.category)
+    paths = [get_target_path(item.category, item.filename) for item in req.files]
+    missing = [path.name for path in paths if not path.exists()]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Files not found: {', '.join(missing[:3])}")
+
+    def remove_all():
+        for path in paths:
+            path.unlink()
+
+    await asyncio.to_thread(remove_all)
+    return {"status": "deleted", "count": len(paths)}
+
+@router.post("/bulk/move")
+async def move_videos(req: BulkMoveRequest):
+    if not req.files:
+        raise HTTPException(status_code=400, detail="No files selected")
+    destination = validate_path_component(req.new_category, "category")
+    moves: list[tuple[Path, Path]] = []
+    for item in req.files:
+        ensure_mutable_category(item.category)
+        old_path = get_target_path(item.category, item.filename)
+        new_path = get_target_path(destination, item.filename)
+        if not old_path.exists():
+            raise HTTPException(status_code=404, detail=f"Source file not found: {item.filename}")
+        if old_path != new_path and new_path.exists():
+            raise HTTPException(status_code=409, detail=f"Target already exists: {item.filename}")
+        if old_path != new_path:
+            moves.append((old_path, new_path))
+
+    def move_all():
+        for old_path, new_path in moves:
+            shutil.move(str(old_path), str(new_path))
+
+    await asyncio.to_thread(move_all)
+    return {"status": "moved", "count": len(moves), "category": destination}
+
 @router.delete("/{category}/{filename}")
 async def delete_video(category: str, filename: str):
+    ensure_mutable_category(category)
     file_path = get_target_path(category, filename)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     
     # Prevent deleting active DB if possible, but let OS handle locks
-    file_path.unlink()
+    await asyncio.to_thread(file_path.unlink)
     return {"status": "deleted"}
 
 @router.post("/move")
 async def move_video(req: MoveVideoRequest):
+    ensure_mutable_category(req.old_category)
     old_path = get_target_path(req.old_category, req.old_filename)
     if not old_path.exists():
         raise HTTPException(status_code=404, detail="Source file not found")
@@ -166,7 +224,7 @@ async def move_video(req: MoveVideoRequest):
     if new_path.exists():
         raise HTTPException(status_code=400, detail="Target filename already exists")
         
-    shutil.move(str(old_path), str(new_path))
+    await asyncio.to_thread(shutil.move, str(old_path), str(new_path))
     return {"status": "moved"}
 
 @router.get("/download_folder/{category}")

@@ -61,11 +61,13 @@ Many pirate or private streaming sites protect their `m3u8` streams using **IP-L
 3. The video is saved to `System Downloads`.
 4. The user clicks the video in the dashboard to play it. The Chrome Extension automatically detects it, allowing the user to tag and submit it directly on the server without any external IP blocking.
 
-### 3. Dataset Dashboard
-A built-in GUI accessible at the backend's root URL (`/`). It mimics a desktop file explorer, offering:
-*   Virtual folders mapped to database categories.
-*   "System Downloads" and "System Database" access.
-*   Real-time video playback and native extension compatibility.
+### 3. Dataset Operations Dashboard
+A built-in GUI at `/dashboard/index.html` for monitoring jobs, checking service health, and managing output files. The library supports familiar Explorer interactions:
+*   Click, `Ctrl+Click`, and `Shift+Click` selection; `Ctrl+A` selects the visible files.
+*   `Enter` previews, `Delete` removes, and `M` opens move/rename.
+*   `Ctrl+X` then `Ctrl+V` moves files into the selected category.
+*   Bulk delete and move use single API operations; thumbnails do not preload full media files.
+*   The live SQLite database is protected from dashboard delete and move operations.
 
 ## Setup & Installation
 
