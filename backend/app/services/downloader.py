@@ -248,10 +248,24 @@ class VideoDownloader:
             headers=headers,
         )
 
-        output_file = settings.temp_path / f"{job_id}_source.mp4"
+        is_hls = media_type == "hls" or ".m3u8" in target_url.lower()
+        is_dash = media_type == "dash" or ".mpd" in target_url.lower()
 
-        if media_type in ("hls", "dash") or target_url.endswith(".m3u8") or ".m3u8" in target_url or ".mpd" in target_url:
-            await VideoDownloader._download_via_ffmpeg(target_url, output_file, req_headers, duration_seconds, progress_callback, is_hls=True)
+        # Keep HLS in its native MPEG-TS container. Remuxing long HLS streams
+        # directly to MP4 can succeed with exit code 0 while silently dropping
+        # video packets after a damaged/timestamp-sensitive segment. MPEG-TS is
+        # designed for this input and gives the cutter the complete timeline.
+        output_file = settings.temp_path / f"{job_id}_source{'.ts' if is_hls else '.mp4'}"
+
+        if is_hls or is_dash:
+            await VideoDownloader._download_via_ffmpeg(
+                target_url,
+                output_file,
+                req_headers,
+                duration_seconds,
+                progress_callback,
+                is_hls=is_hls,
+            )
         else:
             await VideoDownloader._download_direct_http(target_url, output_file, req_headers, progress_callback)
 
@@ -301,18 +315,37 @@ class VideoDownloader:
             headers_list.append(f"Origin: {origin}")
         headers_str = "".join(f"{h}\r\n" for h in headers_list)
 
-        codec_args = ["-c:v", "copy", "-c:a", "aac"] if is_hls else ["-c", "copy"]
+        if is_hls:
+            # Explicit mapping is important because many HLS feeds list audio
+            # before video. Copying into MPEG-TS avoids a lossy audio transcode
+            # and, unlike MP4, tolerates stream timestamp irregularities.
+            codec_args = [
+                "-map", "0:v:0",
+                "-map", "0:a:0?",
+                "-c", "copy",
+                "-max_muxing_queue_size", "2048",
+                "-f", "mpegts",
+            ]
+        else:
+            codec_args = ["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy"]
 
         cmd = [
             "ffmpeg",
             "-y",
+            "-nostdin",
             "-v", "info",
             "-user_agent", ua,
             "-headers", headers_str,
+            "-reconnect", "1",
+            "-reconnect_streamed", "1",
+            "-reconnect_on_network_error", "1",
+            "-reconnect_on_http_error", "408,429,5xx",
+            "-reconnect_delay_max", "10",
             "-allowed_extensions", "ALL",
             "-allowed_segment_extensions", "ALL",
             "-protocol_whitelist", "file,http,https,tcp,tls,crypto,data",
             "-extension_picky", "0",
+            "-fflags", "+genpts+discardcorrupt",
             "-i", url
         ] + codec_args + [str(destination)]
 

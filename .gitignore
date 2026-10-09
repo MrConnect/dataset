@@ -11,6 +11,7 @@ backend/.pytest_cache/
 backend/data/jobs/
 backend/data/downloads/
 backend/dataset/
+backend/storage/downloads/
 backend/storage/temp/
 backend/tagger.db
 files.txt
