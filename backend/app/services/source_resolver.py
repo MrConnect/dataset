@@ -48,9 +48,16 @@ class BackendSourceResolver:
 
         try:
             if detected_type == "hls":
-                qualities, duration = await BackendSourceResolver._resolve_hls(media_url, req_headers)
+                try:
+                    qualities, duration = await BackendSourceResolver._resolve_hls(media_url, req_headers)
+                except Exception as e:
+                    # Fallback to MP4 if HLS fails (could be misidentified or blocked)
+                    qualities, duration = await BackendSourceResolver._resolve_mp4(media_url, req_headers)
             elif detected_type == "dash":
-                qualities, duration = await BackendSourceResolver._resolve_dash(media_url, req_headers)
+                try:
+                    qualities, duration = await BackendSourceResolver._resolve_dash(media_url, req_headers)
+                except Exception as e:
+                    qualities, duration = await BackendSourceResolver._resolve_mp4(media_url, req_headers)
             else:
                 qualities, duration = await BackendSourceResolver._resolve_mp4(media_url, req_headers)
         except Exception as e:
@@ -148,10 +155,14 @@ class BackendSourceResolver:
     @staticmethod
     async def _resolve_mp4(media_url: str, headers: dict[str, str]) -> tuple[list[VideoQualitySchema], float | None]:
         # Probe using ffprobe safely with headers
-        headers_str = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+        ua = headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
+        other_headers = {k: v for k, v in headers.items() if k.lower() != "user-agent"}
+        headers_str = "".join(f"{k}: {v}\r\n" for k, v in other_headers.items())
+        
         cmd = [
             "ffprobe",
             "-v", "error",
+            "-user_agent", ua,
             "-headers", headers_str,
             "-show_entries", "format=duration:stream=width,height,codec_name",
             "-of", "json",
