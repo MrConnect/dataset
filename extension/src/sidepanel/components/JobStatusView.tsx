@@ -137,7 +137,7 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
                       </span>
                     </div>
                     <span style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', color: getStatusColor(job.status) }}>
-                      {job.status}
+                      {job.status} {!isFinished && job.progress !== undefined && `(${job.progress}%)`}
                     </span>
                   </div>
 

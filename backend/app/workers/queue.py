@@ -90,24 +90,21 @@ class JobWorkerQueue:
                     target_height=job.quality_height,
                 )
 
-                is_stream = resolved_type in ("hls", "dash") or ".m3u8" in target_url or ".mpd" in target_url
-                headers_to_use: dict[str, str] | None = None
-                source_path: Path | str | None = None
-                probed_duration: float | None = None
-
-                if is_stream:
-                    # Fast path: Extract segments directly from HLS/DASH stream chunks in seconds
-                    source_path = target_url
-                    headers_to_use = req_headers
-                    logger.info(f"Job {job.id} using direct stream extraction from {target_url[:80]}...")
-                else:
-                    # Static file download path
-                    source_path, probed_duration = await VideoDownloader.download_source(
-                        job_id=job.id,
-                        media_url=target_url,
-                        media_type=resolved_type,
-                        headers=req_headers,
-                    )
+                async def on_download_progress(pct: int):
+                    job.progress = min(100, pct)
+                    await session.commit()
+                
+                # Always download source file first (full caching for fast cuts)
+                logger.info(f"Job {job.id} downloading source video from {target_url[:80]}...")
+                source_path, probed_duration = await VideoDownloader.download_source(
+                    job_id=job.id,
+                    media_url=target_url,
+                    media_type=resolved_type,
+                    headers=req_headers,
+                    duration_seconds=job.duration_seconds,
+                    progress_callback=on_download_progress
+                )
+                headers_to_use = req_headers
 
                 if probed_duration and not job.duration_seconds:
                     job.duration_seconds = probed_duration
@@ -119,7 +116,7 @@ class JobWorkerQueue:
 
                 # 2. Transition to processing segments
                 job.status = "processing"
-                job.progress = 30
+                job.progress = 0
                 await session.commit()
 
                 # Fetch segments
@@ -186,8 +183,8 @@ class JobWorkerQueue:
                             "error": str(seg_err),
                         })
 
-                    progress_pct = 30 + int(((idx + 1) / total_segments) * 65)
-                    job.progress = min(95, progress_pct)
+                    progress_pct = int(((idx + 1) / total_segments) * 100)
+                    job.progress = min(100, progress_pct)
                     await session.commit()
 
                 # 3. Generate traceable CVAT metadata JSON

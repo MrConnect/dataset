@@ -234,6 +234,8 @@ class VideoDownloader:
         media_type: str,
         variant_url: str | None = None,
         headers: dict[str, str] | None = None,
+        duration_seconds: float | None = None,
+        progress_callback = None,
     ) -> tuple[Path, float]:
         """
         Downloads the source video once per job into temporary storage.
@@ -249,16 +251,16 @@ class VideoDownloader:
         output_file = settings.temp_path / f"{job_id}_source.mp4"
 
         if media_type in ("hls", "dash") or target_url.endswith(".m3u8") or ".m3u8" in target_url or ".mpd" in target_url:
-            await VideoDownloader._download_via_ffmpeg(target_url, output_file, req_headers)
+            await VideoDownloader._download_via_ffmpeg(target_url, output_file, req_headers, duration_seconds, progress_callback)
         else:
-            await VideoDownloader._download_direct_http(target_url, output_file, req_headers)
+            await VideoDownloader._download_direct_http(target_url, output_file, req_headers, progress_callback)
 
         # Post-download verification using FFprobe
         duration = await VideoDownloader._probe_media(output_file)
         return output_file, duration
 
     @staticmethod
-    async def _download_direct_http(url: str, destination: Path, headers: dict[str, str]) -> None:
+    async def _download_direct_http(url: str, destination: Path, headers: dict[str, str], progress_callback = None) -> None:
         async with httpx.AsyncClient(headers=headers, timeout=settings.DOWNLOAD_TIMEOUT_SECONDS, follow_redirects=True) as client:
             async with client.stream("GET", url) as resp:
                 resp.raise_for_status()
@@ -266,6 +268,11 @@ class VideoDownloader:
 
                 total_bytes = 0
                 max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+                
+                content_length_str = resp.headers.get('Content-Length')
+                content_length = int(content_length_str) if content_length_str and content_length_str.isdigit() else None
+                
+                last_reported_pct = -1
 
                 with open(destination, "wb") as f:
                     async for chunk in resp.aiter_bytes(chunk_size=65536):
@@ -276,9 +283,16 @@ class VideoDownloader:
                                 f"Downloaded file exceeded maximum allowed size of {settings.MAX_FILE_SIZE_MB}MB"
                             )
                         f.write(chunk)
+                        
+                        if progress_callback and content_length:
+                            pct = min(100, int((total_bytes / content_length) * 100))
+                            if pct > last_reported_pct:
+                                await progress_callback(pct)
+                                last_reported_pct = pct
 
     @staticmethod
-    async def _download_via_ffmpeg(url: str, destination: Path, headers: dict[str, str]) -> None:
+    async def _download_via_ffmpeg(url: str, destination: Path, headers: dict[str, str], duration_seconds: float | None = None, progress_callback = None) -> None:
+        import re
         ua = headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
         headers_list = [f"{k}: {v}" for k, v in headers.items() if k.lower() != "user-agent"]
         if "Origin" not in headers and "Referer" in headers:
@@ -290,7 +304,7 @@ class VideoDownloader:
         cmd = [
             "ffmpeg",
             "-y",
-            "-v", "warning",
+            "-v", "info",
             "-user_agent", ua,
             "-headers", headers_str,
             "-i", url,
@@ -299,15 +313,42 @@ class VideoDownloader:
             str(destination),
         ]
 
+        import asyncio
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        time_regex = re.compile(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})")
+        last_pct = -1
+
+        async def read_stderr():
+            nonlocal last_pct
+            while True:
+                line = await process.stderr.readline()
+                if not line:
+                    break
+                line_str = line.decode('utf-8', errors='replace').strip()
+                if duration_seconds and progress_callback:
+                    match = time_regex.search(line_str)
+                    if match:
+                        h, m, s = match.groups()
+                        time_sec = int(h) * 3600 + int(m) * 60 + float(s)
+                        pct = min(100, int((time_sec / duration_seconds) * 100))
+                        if pct > last_pct:
+                            await progress_callback(pct)
+                            last_pct = pct
+
         try:
-            returncode, _stdout, stderr = await asyncio.to_thread(
-                _run_subprocess_sync, cmd, settings.DOWNLOAD_TIMEOUT_SECONDS
-            )
-            if returncode != 0:
-                raise RuntimeError(f"FFmpeg download failed (code {returncode}): {stderr}")
-        except TimeoutError:
+            await asyncio.wait_for(asyncio.gather(process.wait(), read_stderr()), timeout=settings.DOWNLOAD_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            process.kill()
             destination.unlink(missing_ok=True)
             raise TimeoutError("FFmpeg stream download timed out.")
+            
+        if process.returncode != 0:
+            raise RuntimeError(f"FFmpeg download failed (code {process.returncode})")
 
     @staticmethod
     async def _probe_media(file_path: Path) -> float:
