@@ -3,134 +3,260 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dataset Dashboard</title>
+    <title>Dataset Explorer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .video-card:hover .video-overlay {
-            opacity: 1;
-        }
-        body { background-color: #0f172a; color: #f8fafc; }
+        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+        .folder-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.3); border-color: #38bdf8; }
+        .video-card:hover { border-color: #38bdf8; }
+        .modal-overlay { backdrop-filter: blur(4px); }
     </style>
 </head>
-<body class="p-6 font-sans">
-    <div class="max-w-7xl mx-auto">
-        <div class="flex justify-between items-center mb-8 border-b border-slate-700 pb-4">
-            <h1 class="text-3xl font-bold text-sky-400">Dataset Dashboard</h1>
-            <div id="stats" class="text-slate-400 text-sm"></div>
+<body class="min-h-screen flex flex-col">
+    <!-- Navbar -->
+    <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-10 shadow-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3 cursor-pointer" onclick="goHome()">
+                <div class="w-8 h-8 rounded bg-gradient-to-br from-sky-500 to-indigo-500 flex items-center justify-center font-bold text-white shadow-lg">
+                    V
+                </div>
+                <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-sky-400 to-indigo-400">Dataset Explorer</h1>
+            </div>
+            <div id="stats" class="text-sm font-medium text-slate-400 bg-slate-800 px-4 py-1.5 rounded-full border border-slate-700">Loading...</div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Breadcrumb -->
+        <div class="flex items-center gap-2 mb-8 text-sm font-medium text-slate-400">
+            <button onclick="goHome()" class="hover:text-sky-400 transition-colors flex items-center gap-1">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                Home
+            </button>
+            <span id="breadcrumbDivider" class="hidden">/</span>
+            <span id="breadcrumbCurrent" class="text-slate-200 hidden"></span>
         </div>
 
-        <div id="app" class="space-y-12">
-            <!-- Content will be injected here -->
+        <!-- Views Container -->
+        <div id="foldersView" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            <!-- Folders render here -->
+        </div>
+
+        <div id="filesView" class="hidden">
+            <!-- Toolbar -->
+            <div class="flex justify-between items-center mb-6">
+                <h2 id="currentCategoryTitle" class="text-2xl font-bold text-white"></h2>
+                <button id="downloadZipBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-lg flex items-center gap-2 transition-all">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    Download ZIP (96h Link)
+                </button>
+            </div>
+            <!-- Files Grid -->
+            <div id="filesGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                <!-- Files render here -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Video Preview Modal -->
+    <div id="previewModal" class="fixed inset-0 bg-slate-900/90 modal-overlay hidden items-center justify-center z-50 p-4">
+        <div class="bg-slate-800 rounded-xl shadow-2xl w-full max-w-4xl border border-slate-700 overflow-hidden flex flex-col">
+            <div class="px-6 py-4 border-b border-slate-700 flex justify-between items-center bg-slate-900">
+                <h3 id="previewTitle" class="text-lg font-semibold text-white truncate pr-4"></h3>
+                <button onclick="closePreview()" class="text-slate-400 hover:text-white transition-colors bg-slate-800 p-1 rounded-md">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="aspect-video bg-black relative w-full flex items-center justify-center">
+                <video id="previewVideo" class="w-full h-full" controls controlsList="nodownload" preload="metadata"></video>
+            </div>
+            <div class="p-4 bg-slate-900 flex justify-end gap-3 border-t border-slate-700">
+                <button id="btnPreviewMove" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded transition-colors shadow">Move / Rename</button>
+                <button id="btnPreviewDelete" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-sm font-medium rounded transition-colors shadow">Delete</button>
+                <a id="btnPreviewDownload" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium rounded transition-colors shadow">Download file</a>
+            </div>
         </div>
     </div>
 
     <!-- Move/Rename Modal -->
-    <div id="moveModal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50">
-        <div class="bg-slate-800 p-6 rounded-lg shadow-xl w-96 border border-slate-700">
-            <h3 class="text-lg font-semibold mb-4 text-white">Move / Rename Video</h3>
-            <div class="mb-4">
-                <label class="block text-xs text-slate-400 mb-1">New Category (Label)</label>
-                <input id="modalCategory" type="text" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-white focus:border-sky-500 focus:outline-none">
+    <div id="moveModal" class="fixed inset-0 bg-slate-900/90 modal-overlay hidden items-center justify-center z-[60]">
+        <div class="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md border border-slate-700">
+            <h3 class="text-xl font-bold mb-6 text-white">Move / Rename</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-1.5">Destination Category (Folder)</label>
+                    <input id="modalCategory" type="text" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none transition-all">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-1.5">New Filename</label>
+                    <input id="modalFilename" type="text" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none transition-all">
+                </div>
             </div>
-            <div class="mb-6">
-                <label class="block text-xs text-slate-400 mb-1">New Filename</label>
-                <input id="modalFilename" type="text" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-white focus:border-sky-500 focus:outline-none">
-            </div>
-            <div class="flex justify-end gap-2">
-                <button onclick="closeMoveModal()" class="px-4 py-2 rounded bg-slate-700 hover:bg-slate-600 text-sm">Cancel</button>
-                <button onclick="submitMove()" class="px-4 py-2 rounded bg-sky-600 hover:bg-sky-500 text-sm font-semibold">Save Changes</button>
+            <div class="flex justify-end gap-3 mt-8">
+                <button onclick="closeMoveModal()" class="px-5 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm font-medium transition-colors">Cancel</button>
+                <button onclick="submitMove()" class="px-5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium shadow-lg transition-colors">Save Changes</button>
             </div>
         </div>
     </div>
 
     <script>
         let currentDataset = [];
+        let currentCategory = null;
         let moveState = null;
 
-        async function fetchDataset() {
-            try {
-                const res = await fetch('/api/v1/dataset/');
-                const data = await res.json();
-                currentDataset = data.categories;
-                render();
-            } catch (err) {
-                console.error("Failed to fetch dataset", err);
-            }
+        // Utility: Format ID to Name (e.g. "person_walking" -> "Person Walking")
+        function formatLabelName(id) {
+            if (!id) return "Unknown";
+            return id.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
         }
 
         function formatBytes(bytes, decimals = 2) {
             if (!+bytes) return '0 Bytes';
             const k = 1024;
-            const dm = decimals < 0 ? 0 : decimals;
             const sizes = ['Bytes', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+            return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`;
         }
 
-        function render() {
-            const app = document.getElementById('app');
-            let totalVids = 0;
-            let totalSize = 0;
+        async function fetchDataset() {
+            try {
+                const res = await fetch('/api/v1/dataset/');
+                const data = await res.json();
+                currentDataset = data.categories || [];
+                updateStats();
+                if (currentCategory) {
+                    const exists = currentDataset.find(c => c.name === currentCategory.name);
+                    if (exists) openCategory(exists.name);
+                    else goHome();
+                } else {
+                    renderFolders();
+                }
+            } catch (err) {
+                console.error("Failed to fetch dataset", err);
+                document.getElementById('foldersView').innerHTML = `<div class="col-span-full text-center py-10 text-rose-400">Failed to load dataset. Is the backend running?</div>`;
+            }
+        }
 
+        function updateStats() {
+            let totalVids = 0, totalSize = 0;
+            currentDataset.forEach(cat => {
+                totalVids += cat.videos.length;
+                totalSize += cat.videos.reduce((acc, v) => acc + v.size, 0);
+            });
+            document.getElementById('stats').innerText = `${currentDataset.length} Labels | ${totalVids} Videos | ${formatBytes(totalSize)}`;
+        }
+
+        function goHome() {
+            currentCategory = null;
+            document.getElementById('foldersView').classList.remove('hidden');
+            document.getElementById('filesView').classList.add('hidden');
+            document.getElementById('breadcrumbDivider').classList.add('hidden');
+            document.getElementById('breadcrumbCurrent').classList.add('hidden');
+            renderFolders();
+        }
+
+        function renderFolders() {
+            const container = document.getElementById('foldersView');
             if (currentDataset.length === 0) {
-                app.innerHTML = `<div class="text-center py-20 text-slate-500">No data found in dataset. Start tagging!</div>`;
-                document.getElementById('stats').innerText = '';
+                container.innerHTML = `<div class="col-span-full text-center py-20 text-slate-500 text-lg border-2 border-dashed border-slate-800 rounded-xl">No categories found. Start tagging!</div>`;
                 return;
             }
 
-            app.innerHTML = currentDataset.map(cat => {
-                totalVids += cat.videos.length;
-                totalSize += cat.videos.reduce((acc, v) => acc + v.size, 0);
-
+            container.innerHTML = currentDataset.map(cat => {
+                const totalSize = cat.videos.reduce((acc, v) => acc + v.size, 0);
+                const niceName = formatLabelName(cat.name);
+                
                 return `
-                    <div class="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden shadow-lg">
-                        <div class="bg-slate-800 px-6 py-4 flex justify-between items-center border-b border-slate-700">
-                            <div class="flex items-center gap-3">
-                                <h2 class="text-xl font-semibold text-white tracking-wide">${cat.name}</h2>
-                                <span class="bg-slate-700 text-slate-300 text-xs px-2 py-1 rounded-full">${cat.videos.length} videos</span>
+                    <div onclick="openCategory('${cat.name}')" class="folder-card bg-slate-800 rounded-xl p-5 border border-slate-700 cursor-pointer transition-all flex flex-col group">
+                        <div class="flex items-start justify-between mb-4">
+                            <div class="p-3 bg-sky-500/10 rounded-lg group-hover:bg-sky-500/20 transition-colors">
+                                <svg class="w-8 h-8 text-sky-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path></svg>
                             </div>
-                            <button onclick="downloadFolder('${cat.name}')" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-1.5 px-4 rounded transition-colors shadow flex items-center gap-2">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                                Download ZIP (96h Link)
-                            </button>
+                            <span class="text-xs font-semibold px-2.5 py-1 bg-slate-700 text-slate-300 rounded-full">${cat.videos.length}</span>
                         </div>
-                        <div class="p-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                            ${cat.videos.length === 0 ? '<div class="text-slate-500 text-sm">Empty folder</div>' : ''}
-                            ${cat.videos.map(v => `
-                                <div class="video-card group relative bg-slate-800 rounded-lg overflow-hidden border border-slate-700 hover:border-sky-500 transition-colors">
-                                    <div class="aspect-video bg-black relative">
-                                        <video src="/media/${cat.name}/${v.filename}" class="w-full h-full object-contain" preload="metadata" controls controlsList="nodownload"></video>
-                                    </div>
-                                    <div class="p-3">
-                                        <div class="text-xs text-slate-300 font-medium truncate" title="${v.filename}">${v.filename}</div>
-                                        <div class="text-[10px] text-slate-500 mt-1 flex justify-between">
-                                            <span>${formatBytes(v.size)}</span>
-                                            <span>${new Date(v.created_at * 1000).toLocaleDateString()}</span>
-                                        </div>
-                                    </div>
-                                    <div class="video-overlay absolute inset-0 bg-black/80 opacity-0 transition-opacity flex flex-col justify-center items-center gap-2 pointer-events-none group-hover:pointer-events-auto">
-                                        <a href="/media/${cat.name}/${v.filename}" download="${v.filename}" class="w-24 text-center bg-sky-600 hover:bg-sky-500 text-white text-xs py-1.5 rounded cursor-pointer">Download</a>
-                                        <button onclick="openMoveModal('${cat.name}', '${v.filename}')" class="w-24 text-center bg-slate-600 hover:bg-slate-500 text-white text-xs py-1.5 rounded cursor-pointer">Move/Rename</button>
-                                        <button onclick="deleteVideo('${cat.name}', '${v.filename}')" class="w-24 text-center bg-red-600 hover:bg-red-500 text-white text-xs py-1.5 rounded cursor-pointer">Delete</button>
-                                    </div>
+                        <h3 class="text-lg font-bold text-white mb-1 truncate" title="${niceName}">${niceName}</h3>
+                        <p class="text-xs text-slate-500 mt-auto flex justify-between">
+                            <span>ID: ${cat.name}</span>
+                            <span>${formatBytes(totalSize)}</span>
+                        </p>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function openCategory(catId) {
+            currentCategory = currentDataset.find(c => c.name === catId);
+            if (!currentCategory) return;
+
+            document.getElementById('foldersView').classList.add('hidden');
+            document.getElementById('filesView').classList.remove('hidden');
+            
+            document.getElementById('breadcrumbDivider').classList.remove('hidden');
+            document.getElementById('breadcrumbCurrent').classList.remove('hidden');
+            document.getElementById('breadcrumbCurrent').innerText = formatLabelName(catId);
+            
+            document.getElementById('currentCategoryTitle').innerText = formatLabelName(catId);
+            
+            const btnZip = document.getElementById('downloadZipBtn');
+            btnZip.onclick = () => window.location.href = `/api/v1/dataset/download_folder/${catId}`;
+
+            renderFiles();
+        }
+
+        function renderFiles() {
+            const container = document.getElementById('filesGrid');
+            if (currentCategory.videos.length === 0) {
+                container.innerHTML = `<div class="col-span-full text-center py-20 text-slate-500 text-lg border-2 border-dashed border-slate-800 rounded-xl">Folder is empty.</div>`;
+                return;
+            }
+
+            container.innerHTML = currentCategory.videos.map(v => {
+                const vidUrl = `/media/${currentCategory.name}/${v.filename}`;
+                return `
+                    <div class="video-card bg-slate-800 rounded-lg border border-slate-700 overflow-hidden transition-all group flex flex-col">
+                        <div class="aspect-video bg-slate-900 relative cursor-pointer" onclick="openPreview('${currentCategory.name}', '${v.filename}')">
+                            <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-slate-900/40 transition-opacity">
+                                <div class="w-12 h-12 bg-sky-500/80 rounded-full flex items-center justify-center text-white backdrop-blur shadow-lg">
+                                    <svg class="w-6 h-6 ml-1" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6z"></path></svg>
                                 </div>
-                            `).join('')}
+                            </div>
+                            <svg class="w-12 h-12 text-slate-700 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm3 2h6v4H7V5zm8 8v2h1v-2h-1zm-2-2H7v4h6v-4zm2 0h1V9h-1v2zm1-4V5h-1v2h1zM5 5h1v2H5V5zm0 4h1v2H5V9zm0 4h1v2H5v-2z"></path></svg>
+                        </div>
+                        <div class="p-3 border-t border-slate-700 flex-1 flex flex-col justify-between">
+                            <div class="text-sm text-slate-200 font-medium truncate mb-2" title="${v.filename}">${v.filename}</div>
+                            <div class="text-[11px] text-slate-500 flex justify-between items-center">
+                                <span>${formatBytes(v.size)}</span>
+                                <span>${new Date(v.created_at * 1000).toLocaleDateString()}</span>
+                            </div>
                         </div>
                     </div>
                 `;
             }).join('');
-
-            document.getElementById('stats').innerText = `${currentDataset.length} Labels | ${totalVids} Videos | ${formatBytes(totalSize)}`;
         }
 
-        async function deleteVideo(cat, filename) {
-            if (!confirm(`Are you sure you want to delete ${filename}?`)) return;
-            await fetch(`/api/v1/dataset/${cat}/${filename}`, { method: 'DELETE' });
-            fetchDataset();
+        function openPreview(cat, filename) {
+            const vidUrl = `/media/${cat}/${filename}`;
+            document.getElementById('previewTitle').innerText = filename;
+            const videoEl = document.getElementById('previewVideo');
+            videoEl.src = vidUrl;
+            
+            document.getElementById('btnPreviewDownload').href = vidUrl;
+            document.getElementById('btnPreviewDownload').download = filename;
+            
+            document.getElementById('btnPreviewMove').onclick = () => { closePreview(); openMoveModal(cat, filename); };
+            document.getElementById('btnPreviewDelete').onclick = () => { closePreview(); deleteVideo(cat, filename); };
+            
+            document.getElementById('previewModal').style.display = 'flex';
+            videoEl.play().catch(e => console.warn("Autoplay prevented:", e));
         }
 
-        function downloadFolder(cat) {
-            window.location.href = `/api/v1/dataset/download_folder/${cat}`;
+        function closePreview() {
+            const videoEl = document.getElementById('previewVideo');
+            videoEl.pause();
+            videoEl.src = "";
+            document.getElementById('previewModal').style.display = 'none';
         }
 
         function openMoveModal(cat, filename) {
@@ -149,22 +275,18 @@
             if (!moveState) return;
             const new_category = document.getElementById('modalCategory').value.trim();
             const new_filename = document.getElementById('modalFilename').value.trim();
-
             if (!new_category || !new_filename) return alert("Fields cannot be empty");
 
             try {
                 const res = await fetch('/api/v1/dataset/move', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        old_category: moveState.old_category,
-                        old_filename: moveState.old_filename,
-                        new_category,
-                        new_filename
-                    })
+                    body: JSON.stringify({ old_category: moveState.old_category, old_filename: moveState.old_filename, new_category, new_filename })
                 });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || "Move failed");
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.detail || "Move failed");
+                }
                 closeMoveModal();
                 fetchDataset();
             } catch (err) {
@@ -172,7 +294,17 @@
             }
         }
 
-        // Init
+        async function deleteVideo(cat, filename) {
+            if (!confirm(`Are you sure you want to delete ${filename}?`)) return;
+            try {
+                await fetch(`/api/v1/dataset/${cat}/${filename}`, { method: 'DELETE' });
+                fetchDataset();
+            } catch (e) {
+                alert("Failed to delete video.");
+            }
+        }
+
+        // Setup
         fetchDataset();
     </script>
 </body>
