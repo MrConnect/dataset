@@ -1,67 +1,91 @@
 # Video Dataset Tagger
 
-A full-stack solution for seamlessly tagging and extracting frame-accurate video segments directly from HLS/DASH/MP4 streams (e.g. VidTube, TopCinema). Designed for AI dataset preparation (CVAT ready).
+## Overview
+**Video Dataset Tagger** is a specialized full-stack tool designed to streamline the creation of video datasets for Machine Learning. It allows users to cut, tag, and organize video segments directly from web streaming platforms (or local uploads) into a structured dataset.
 
-## Architecture
+The system consists of two main components:
+1. **Chrome Extension (Frontend):** Injects a tagging UI overlay into web video players (HTML5, Video.js, JWPlayer). It allows the user to mark "Start" and "End" times, assign category labels, and submit processing jobs.
+2. **FastAPI Server (Backend):** Receives jobs, fetches the media stream (using `yt-dlp` or direct `ffmpeg` pipelines), extracts the exact video segments, and organizes them into category folders. It also hosts a Windows Explorer-style Web Dashboard for managing the dataset.
 
-The project is split into two parts:
-1. **Extension** (`/extension`): A Chrome/Edge extension that detects video streams natively via Network Interception, bypasses CORS, and injects a modern overlay UI directly into the video player (supporting fullscreen on custom players like JWPlayer). Features frame-by-frame seeking and global keyboard shortcuts.
-2. **Backend API** (`/backend`): A FastAPI service that securely resolves stream qualities, queues jobs, and executes frame-accurate FFmpeg extractions `-preset ultrafast` to avoid timeouts. Outputs perfectly trimmed `.mp4` segments sorted into categories.
+## Architecture & Tech Stack
+*   **Backend:** Python 3.12, FastAPI, SQLAlchemy (Async), SQLite (`aiosqlite`), FFmpeg, `yt-dlp`, Uvicorn.
+*   **Extension:** TypeScript, React (Sidepanel), TailwindCSS, Vite, Chrome Manifest V3.
+*   **Deployment:** Docker, optimized for Coolify.
 
-## Keyboard Shortcuts (Inside Video Player)
-
-The extension captures keyboard shortcuts in the capture-phase, bypassing any custom player's own shortcuts regardless of keyboard layout (works natively with English, Arabic, etc.).
-
-- `I` or `[`: Mark Segment Start (In)
-- `O` or `]`: Mark Segment End (Out)
-- `,` (Comma): Step Backward 1 frame
-- `.` (Period): Step Forward 1 frame
-- `Enter`: Save Segment
-- `Escape`: Cancel/Clear markers
-
-## Setup Instructions
-
-### 1. Backend (FastAPI + FFmpeg)
-
-Prerequisites: Python 3.12, FFmpeg installed and in PATH.
-
-```bash
-cd backend
-python -m venv .venv
-# Activate venv:
-# Windows: .venv\Scripts\activate
-# Linux/Mac: source .venv/bin/activate
-pip install -r requirements.txt
-
-# Run the backend daemon
-uvicorn app.main:app --port 8000
+## Project Structure
+```text
+.
+├── backend/
+│   ├── app/
+│   │   ├── api/          # FastAPI routes (dataset, jobs, categories)
+│   │   ├── models/       # SQLAlchemy models (Jobs, Categories)
+│   │   ├── services/     # Core logic (Downloader, VideoProcessor, HLS/MP4 resolvers)
+│   │   └── workers/      # Async queue processing
+│   ├── static/           # Dashboard UI (index.html, JS, CSS)
+│   ├── Dockerfile        # Backend container definition
+│   └── requirements.txt  # Python dependencies
+└── extension/
+    ├── src/
+    │   ├── content/      # Content scripts (UI injection, video detection)
+    │   ├── sidepanel/    # React-based sidepanel for Job Status/Management
+    │   └── background/   # Service worker for cross-origin requests & state
+    ├── manifest.json
+    └── vite.config.ts    # Extension build config
 ```
 
-### 2. Extension (Chrome / Edge)
+## Key Workflows & Features
 
-Prerequisites: Node.js 18+
+### 1. Standard Web Tagging
+1. User navigates to a supported streaming site.
+2. The extension detects the video player and overlays the tagging UI.
+3. User creates segments, assigns labels (synced from the backend database), and clicks "Submit".
+4. The backend downloads the source video into `_downloads` and uses `ffmpeg` to precisely extract and save the segments into `_dataset/<category>`.
 
+### 2. The "IP-Lock / Cloudflare" Bypass Workflow (Upload Video)
+Many pirate or private streaming sites protect their `m3u8` streams using **IP-Locked JWT Tokens** and **Cloudflare Turnstile**, which block automated server downloads (403 Forbidden). 
+**Solution:** 
+1. The user downloads the full video locally (e.g., via IDM) using their own home IP.
+2. The user opens the Backend Dashboard and uses the **"Upload Video"** button.
+3. The video is saved to `System Downloads`.
+4. The user clicks the video in the dashboard to play it. The Chrome Extension automatically detects it, allowing the user to tag and submit it directly on the server without any external IP blocking.
+
+### 3. Dataset Dashboard
+A built-in GUI accessible at the backend's root URL (`/`). It mimics a desktop file explorer, offering:
+*   Virtual folders mapped to database categories.
+*   "System Downloads" and "System Database" access.
+*   Real-time video playback and native extension compatibility.
+
+## Setup & Installation
+
+### Backend
+The backend is Dockerized and ready for deployment (e.g., via Coolify).
+To run locally:
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # (or venv\Scripts\activate on Windows)
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+*Note: Ensure `ffmpeg` and `ffprobe` are installed on your system.*
+
+### Extension
+1. Ensure Node.js is installed.
+2. Build the extension:
 ```bash
 cd extension
 npm install
 npm run build
 ```
+3. Open Chrome and navigate to `chrome://extensions/`.
+4. Enable **Developer mode**.
+5. Click **Load unpacked** and select the `extension/dist` folder.
+6. Open the extension options/popup and set your Backend URL (e.g., `http://localhost:8000`).
 
-Then, load the extension into your browser:
-1. Open `edge://extensions` or `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked** and select the `video-dataset-tagger/extension/dist` folder.
+## Known Limitations & Design Decisions
+*   **No Headless Browser on Backend:** We intentionally removed server-side browser automation (Playwright) because streaming sites heavily use Cloudflare Data Center IP blocks. The manual Upload feature is the designated fallback for heavily protected sites.
+*   **Database Constraints:** The `JobSegment` model relies on `cascade="all, delete-orphan"`. Deleting a job from the UI will completely wipe its associated cuts and segments from the DB.
+*   **FFmpeg Bitstream Filters:** `-bsf:a aac_adtstoasc` was removed from the downloader to prevent Exit Code 8 crashes on non-AAC streams.
 
-## Workflow
-
-1. Navigate to a supported streaming site (e.g., TopCinema).
-2. Start playing the video.
-3. The Video Tagger UI will automatically inject itself into the video player.
-4. Select your preferred Quality from the top-left dropdown.
-5. Use shortcuts to tag segments.
-6. Click **Send Segments to Backend API**.
-7. The Backend will download and cut the segments seamlessly!
-
-## License
-
-MIT
+---
+*Maintained by the Video Dataset Tagger Team.*
