@@ -28,48 +28,87 @@ def get_temp_dir() -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
+def get_target_path(category: str, filename: str = "") -> Path:
+    if category == "_downloads":
+        d = Path(settings.BASE_STORAGE_DIR) / "downloads"
+    elif category == "_database":
+        d = Path(settings.BASE_STORAGE_DIR)
+    else:
+        d = get_dataset_dir() / category
+        d.mkdir(parents=True, exist_ok=True)
+    
+    if filename:
+        return d / filename
+    return d
+
 @router.get("/")
 async def list_dataset():
     dataset_dir = get_dataset_dir()
     categories = []
     
+    # 1. Standard Dataset Categories
     for cat_dir in dataset_dir.iterdir():
-        if cat_dir.is_dir() and cat_dir.name != "metadata":
+        if cat_dir.is_dir() and cat_dir.name != "metadata" and not cat_dir.name.startswith("_"):
             videos = []
             for video_file in cat_dir.glob("*.mp4"):
                 videos.append({
                     "filename": video_file.name,
                     "size": video_file.stat().st_size,
-                    "created_at": video_file.stat().st_ctime
+                    "created_at": video_file.stat().st_ctime,
+                    "url": f"/media/{cat_dir.name}/{video_file.name}"
                 })
             categories.append({
                 "name": cat_dir.name,
                 "videos": sorted(videos, key=lambda x: x["created_at"], reverse=True)
             })
             
+    # 2. Full Downloads (Cache)
+    downloads_dir = Path(settings.BASE_STORAGE_DIR) / "downloads"
+    if downloads_dir.exists() and downloads_dir.is_dir():
+        downloads = []
+        for file in downloads_dir.iterdir():
+            if file.is_file():
+                downloads.append({
+                    "filename": file.name,
+                    "size": file.stat().st_size,
+                    "created_at": file.stat().st_ctime,
+                    "url": f"/storage/downloads/{file.name}"
+                })
+        if downloads:
+            categories.append({"name": "_downloads", "videos": sorted(downloads, key=lambda x: x["created_at"], reverse=True)})
+
+    # 3. System Database
+    db_path = Path(settings.BASE_STORAGE_DIR) / "tagger.db"
+    if db_path.exists():
+        categories.append({
+            "name": "_database",
+            "videos": [{
+                "filename": db_path.name,
+                "size": db_path.stat().st_size,
+                "created_at": db_path.stat().st_ctime,
+                "url": f"/storage/{db_path.name}"
+            }]
+        })
+            
     return {"categories": categories}
 
 @router.delete("/{category}/{filename}")
 async def delete_video(category: str, filename: str):
-    video_path = get_dataset_dir() / category / filename
-    if not video_path.exists():
-        raise HTTPException(status_code=404, detail="Video not found")
+    file_path = get_target_path(category, filename)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
     
-    video_path.unlink()
+    # Prevent deleting active DB if possible, but let OS handle locks
+    file_path.unlink()
     return {"status": "deleted"}
 
 @router.post("/move")
 async def move_video(req: MoveVideoRequest):
-    dataset_dir = get_dataset_dir()
-    old_path = dataset_dir / req.old_category / req.old_filename
-    
+    old_path = get_target_path(req.old_category, req.old_filename)
     if not old_path.exists():
-        raise HTTPException(status_code=404, detail="Source video not found")
+        raise HTTPException(status_code=404, detail="Source file not found")
         
-    new_cat_dir = dataset_dir / req.new_category
-    new_cat_dir.mkdir(exist_ok=True)
-    
-    new_path = new_cat_dir / req.new_filename
+    new_path = get_target_path(req.new_category, req.new_filename)
     if new_path.exists():
         raise HTTPException(status_code=400, detail="Target filename already exists")
         

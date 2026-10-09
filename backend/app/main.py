@@ -74,6 +74,9 @@ static_dir.mkdir(parents=True, exist_ok=True)
 
 # Mount dataset for direct preview (e.g. /media/category/file.mp4)
 app.mount("/media", StaticFiles(directory=settings.DATASET_DIR), name="media")
+# Mount internal storage (for database and full movies)
+Path(settings.BASE_STORAGE_DIR).mkdir(parents=True, exist_ok=True)
+app.mount("/storage", StaticFiles(directory=settings.BASE_STORAGE_DIR), name="storage")
 # Mount dashboard
 app.mount("/dashboard", StaticFiles(directory=str(static_dir), html=True), name="dashboard")
 
