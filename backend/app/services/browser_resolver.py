@@ -49,6 +49,20 @@ class BrowserResolver:
                 logger.info(f"Navigating to {page_url} in headless browser...")
                 await page.goto(page_url, wait_until="domcontentloaded", timeout=20000)
                 
+                # AGGRESSIVE AD BYPASS: Find the actual player iframe and navigate directly to it
+                # Many streaming sites wrap the player in an iframe and cover it with click-jacking ads
+                frames = page.frames
+                player_url = None
+                for frame in frames:
+                    url = frame.url
+                    if url and ("player" in url or "embed" in url or "vidcore" in url or "vidsrc" in url):
+                        player_url = url
+                        break
+                
+                if player_url and player_url != page.url:
+                    logger.info(f"Ad-bypass: Found inner player iframe, navigating directly to {player_url}")
+                    await page.goto(player_url, wait_until="domcontentloaded", timeout=15000)
+                
                 # Try clicking center of screen a few times (to dismiss overlays and click play)
                 for _ in range(3):
                     try:
@@ -60,11 +74,11 @@ class BrowserResolver:
                 # Check for iframes and click inside them too
                 for frame in page.frames:
                     try:
-                        await frame.click('body', position={'x': 100, 'y': 100}, force=True, timeout=1000)
+                        await frame.click('body', position={'x': 300, 'y': 200}, force=True, timeout=1000)
                     except:
                         pass
                     
-                for _ in range(40): # Wait up to 20 seconds
+                for _ in range(30): # Wait up to 15 seconds
                     if target_m3u8:
                         break
                     await asyncio.sleep(0.5)
