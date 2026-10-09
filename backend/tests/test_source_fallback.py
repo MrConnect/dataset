@@ -1,10 +1,14 @@
 from pathlib import Path
+import asyncio
+import time
+from types import SimpleNamespace
 
 import pytest
 
 from app.db.session import AsyncSessionLocal
 from app.models.job import Job
 from app.services.downloader import VideoDownloader
+from app.services.source_resolver import BackendSourceResolver
 from app.workers.queue import JobWorkerQueue
 
 
@@ -117,3 +121,19 @@ async def test_upload_mode_waits_without_attempting_remote_download(client, auth
     data = details.json()
     assert data["status"] == "awaiting_source"
     assert data["failure_code"] == "SOURCE_UPLOAD_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_mp4_probe_does_not_block_event_loop(monkeypatch):
+    def slow_probe(*_args, **_kwargs):
+        time.sleep(0.15)
+        return SimpleNamespace(returncode=1, stdout="", stderr="probe failed")
+
+    monkeypatch.setattr("app.services.source_resolver.subprocess.run", slow_probe)
+    probe = asyncio.create_task(BackendSourceResolver._resolve_mp4("https://example.com/video.mp4", {}))
+    await asyncio.sleep(0.02)
+
+    assert not probe.done()
+    # This coroutine only gets CPU time if ffprobe is outside the event loop.
+    assert asyncio.get_running_loop().is_running()
+    await probe

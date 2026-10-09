@@ -1,5 +1,6 @@
 import json
 import subprocess
+import asyncio
 from urllib.parse import urlparse
 import defusedxml.ElementTree as ET
 import httpx
@@ -170,7 +171,16 @@ class BackendSourceResolver:
         ]
 
         try:
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+            # ffprobe is a blocking process. Keep it off the ASGI event loop so
+            # source discovery cannot starve health checks and dashboard APIs.
+            res = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=15,
+            )
             if res.returncode == 0:
                 data = json.loads(res.stdout)
                 duration = float(data.get("format", {}).get("duration", 0)) or None
