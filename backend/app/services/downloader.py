@@ -345,6 +345,9 @@ class VideoDownloader:
             "-allowed_segment_extensions", "ALL",
             "-protocol_whitelist", "file,http,https,tcp,tls,crypto,data",
             "-extension_picky", "0",
+            "-seg_max_retry", "10",
+            "-http_persistent", "0",
+            "-timeout", "30000000",
             "-fflags", "+genpts+discardcorrupt",
             "-i", url
         ] + codec_args + [str(destination)]
