@@ -2,7 +2,7 @@ import os
 import shutil
 import time
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import zipfile
@@ -21,11 +21,25 @@ async def upload_video(file: UploadFile = File(...)):
     downloads_dir = Path(settings.BASE_STORAGE_DIR) / "downloads"
     downloads_dir.mkdir(parents=True, exist_ok=True)
     
-    file_path = downloads_dir / file.filename
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    filename = validate_path_component(file.filename or "", "filename")
+    file_path = downloads_dir / filename
+    if file_path.exists():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A file with this name already exists")
+    written = 0
+    try:
+        with file_path.open("wb") as buffer:
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > settings.MAX_DOWNLOAD_SIZE_BYTES:
+                    raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Uploaded file is too large")
+                buffer.write(chunk)
+    except Exception:
+        file_path.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
         
-    return {"ok": True, "filename": file.filename}
+    return {"ok": True, "filename": filename, "size": written}
 
 class MoveVideoRequest(BaseModel):
     old_category: str
@@ -43,7 +57,16 @@ def get_temp_dir() -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
+def validate_path_component(value: str, field: str) -> str:
+    """Allow one filename/path component only; never let dashboard input escape storage."""
+    if not value or value in {".", ".."} or Path(value).name != value or "/" in value or "\\" in value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}")
+    return value
+
 def get_target_path(category: str, filename: str = "") -> Path:
+    category = validate_path_component(category, "category")
+    if filename:
+        filename = validate_path_component(filename, "filename")
     if category == "_downloads":
         d = Path(settings.BASE_STORAGE_DIR) / "downloads"
     elif category == "_database":
@@ -101,12 +124,11 @@ async def list_dataset(db: AsyncSession = Depends(get_db)):
                     "created_at": file.stat().st_ctime,
                     "url": f"/storage/downloads/{file.name}"
                 })
-        if downloads:
-            categories.append({
-                "name": "_downloads",
-                "display_name": "System Downloads",
-                "videos": sorted(downloads, key=lambda x: x["created_at"], reverse=True)
-            })
+        categories.append({
+            "name": "_downloads",
+            "display_name": "Source Downloads",
+            "videos": sorted(downloads, key=lambda x: x["created_at"], reverse=True)
+        })
 
     # 3. System Database
     db_path = Path(settings.BASE_STORAGE_DIR) / "tagger.db"
@@ -149,6 +171,7 @@ async def move_video(req: MoveVideoRequest):
 
 @router.get("/download_folder/{category}")
 async def download_folder_zip(category: str):
+    category = validate_path_component(category, "category")
     dataset_dir = get_dataset_dir()
     cat_dir = dataset_dir / category
     if not cat_dir.exists() or not cat_dir.is_dir():
