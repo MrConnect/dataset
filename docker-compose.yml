@@ -16,8 +16,8 @@ services:
       - ALLOW_LOCAL_NETWORK=${ALLOW_LOCAL_NETWORK:-false}
       - CELERY_ENABLED=false
     volumes:
-      - ./backend/dataset:/app/dataset
-      - ./backend/storage:/app/storage
+      - dataset_data:/app/dataset
+      - storage_data:/app/storage
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s
@@ -30,3 +30,7 @@ services:
 networks:
   tagger-network:
     driver: bridge
+
+volumes:
+  dataset_data:
+  storage_data:
