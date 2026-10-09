@@ -1,42 +1,6 @@
 import { Category, ExtensionSettings, TaggingSession } from '../types';
 
-const DEFAULT_CATEGORIES: Category[] = [
-  {
-    id: 'person_walking',
-    name: 'Person Walking',
-    color: '#22C55E',
-    description: 'Person walking in the scene',
-    shortcut: 'w',
-  },
-  {
-    id: 'person_running',
-    name: 'Person Running',
-    color: '#3B82F6',
-    description: 'Person running or sprinting',
-    shortcut: 'r',
-  },
-  {
-    id: 'vehicle_car',
-    name: 'Vehicle / Car',
-    color: '#F59E0B',
-    description: 'Automobile or moving vehicle',
-    shortcut: 'v',
-  },
-  {
-    id: 'action_gesture',
-    name: 'Hand Gesture',
-    color: '#EC4899',
-    description: 'Specific hand or arm gesture',
-    shortcut: 'g',
-  },
-  {
-    id: 'face_closeup',
-    name: 'Face Close-up',
-    color: '#8B5CF6',
-    description: 'Close-up camera view of human face',
-    shortcut: 'f',
-  },
-];
+const DEFAULT_CATEGORIES: Category[] = [];
 
 const DEFAULT_SETTINGS: ExtensionSettings = {
   api_base_url: 'http://localhost:8000',

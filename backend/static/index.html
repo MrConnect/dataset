@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dataset Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .video-card:hover .video-overlay {
+            opacity: 1;
+        }
+        body { background-color: #0f172a; color: #f8fafc; }
+    </style>
+</head>
+<body class="p-6 font-sans">
+    <div class="max-w-7xl mx-auto">
+        <div class="flex justify-between items-center mb-8 border-b border-slate-700 pb-4">
+            <h1 class="text-3xl font-bold text-sky-400">Dataset Dashboard</h1>
+            <div id="stats" class="text-slate-400 text-sm"></div>
+        </div>
+
+        <div id="app" class="space-y-12">
+            <!-- Content will be injected here -->
+        </div>
+    </div>
+
+    <!-- Move/Rename Modal -->
+    <div id="moveModal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50">
+        <div class="bg-slate-800 p-6 rounded-lg shadow-xl w-96 border border-slate-700">
+            <h3 class="text-lg font-semibold mb-4 text-white">Move / Rename Video</h3>
+            <div class="mb-4">
+                <label class="block text-xs text-slate-400 mb-1">New Category (Label)</label>
+                <input id="modalCategory" type="text" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-white focus:border-sky-500 focus:outline-none">
+            </div>
+            <div class="mb-6">
+                <label class="block text-xs text-slate-400 mb-1">New Filename</label>
+                <input id="modalFilename" type="text" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-white focus:border-sky-500 focus:outline-none">
+            </div>
+            <div class="flex justify-end gap-2">
+                <button onclick="closeMoveModal()" class="px-4 py-2 rounded bg-slate-700 hover:bg-slate-600 text-sm">Cancel</button>
+                <button onclick="submitMove()" class="px-4 py-2 rounded bg-sky-600 hover:bg-sky-500 text-sm font-semibold">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentDataset = [];
+        let moveState = null;
+
+        async function fetchDataset() {
+            try {
+                const res = await fetch('/api/v1/dataset/');
+                const data = await res.json();
+                currentDataset = data.categories;
+                render();
+            } catch (err) {
+                console.error("Failed to fetch dataset", err);
+            }
+        }
+
+        function formatBytes(bytes, decimals = 2) {
+            if (!+bytes) return '0 Bytes';
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+        }
+
+        function render() {
+            const app = document.getElementById('app');
+            let totalVids = 0;
+            let totalSize = 0;
+
+            if (currentDataset.length === 0) {
+                app.innerHTML = `<div class="text-center py-20 text-slate-500">No data found in dataset. Start tagging!</div>`;
+                document.getElementById('stats').innerText = '';
+                return;
+            }
+
+            app.innerHTML = currentDataset.map(cat => {
+                totalVids += cat.videos.length;
+                totalSize += cat.videos.reduce((acc, v) => acc + v.size, 0);
+
+                return `
+                    <div class="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden shadow-lg">
+                        <div class="bg-slate-800 px-6 py-4 flex justify-between items-center border-b border-slate-700">
+                            <div class="flex items-center gap-3">
+                                <h2 class="text-xl font-semibold text-white tracking-wide">${cat.name}</h2>
+                                <span class="bg-slate-700 text-slate-300 text-xs px-2 py-1 rounded-full">${cat.videos.length} videos</span>
+                            </div>
+                            <button onclick="downloadFolder('${cat.name}')" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-1.5 px-4 rounded transition-colors shadow flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                Download ZIP (96h Link)
+                            </button>
+                        </div>
+                        <div class="p-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                            ${cat.videos.length === 0 ? '<div class="text-slate-500 text-sm">Empty folder</div>' : ''}
+                            ${cat.videos.map(v => `
+                                <div class="video-card group relative bg-slate-800 rounded-lg overflow-hidden border border-slate-700 hover:border-sky-500 transition-colors">
+                                    <div class="aspect-video bg-black relative">
+                                        <video src="/media/${cat.name}/${v.filename}" class="w-full h-full object-contain" preload="metadata" controls controlsList="nodownload"></video>
+                                    </div>
+                                    <div class="p-3">
+                                        <div class="text-xs text-slate-300 font-medium truncate" title="${v.filename}">${v.filename}</div>
+                                        <div class="text-[10px] text-slate-500 mt-1 flex justify-between">
+                                            <span>${formatBytes(v.size)}</span>
+                                            <span>${new Date(v.created_at * 1000).toLocaleDateString()}</span>
+                                        </div>
+                                    </div>
+                                    <div class="video-overlay absolute inset-0 bg-black/80 opacity-0 transition-opacity flex flex-col justify-center items-center gap-2 pointer-events-none group-hover:pointer-events-auto">
+                                        <a href="/media/${cat.name}/${v.filename}" download="${v.filename}" class="w-24 text-center bg-sky-600 hover:bg-sky-500 text-white text-xs py-1.5 rounded cursor-pointer">Download</a>
+                                        <button onclick="openMoveModal('${cat.name}', '${v.filename}')" class="w-24 text-center bg-slate-600 hover:bg-slate-500 text-white text-xs py-1.5 rounded cursor-pointer">Move/Rename</button>
+                                        <button onclick="deleteVideo('${cat.name}', '${v.filename}')" class="w-24 text-center bg-red-600 hover:bg-red-500 text-white text-xs py-1.5 rounded cursor-pointer">Delete</button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('stats').innerText = `${currentDataset.length} Labels | ${totalVids} Videos | ${formatBytes(totalSize)}`;
+        }
+
+        async function deleteVideo(cat, filename) {
+            if (!confirm(`Are you sure you want to delete ${filename}?`)) return;
+            await fetch(`/api/v1/dataset/${cat}/${filename}`, { method: 'DELETE' });
+            fetchDataset();
+        }
+
+        function downloadFolder(cat) {
+            window.location.href = `/api/v1/dataset/download_folder/${cat}`;
+        }
+
+        function openMoveModal(cat, filename) {
+            moveState = { old_category: cat, old_filename: filename };
+            document.getElementById('modalCategory').value = cat;
+            document.getElementById('modalFilename').value = filename;
+            document.getElementById('moveModal').style.display = 'flex';
+        }
+
+        function closeMoveModal() {
+            moveState = null;
+            document.getElementById('moveModal').style.display = 'none';
+        }
+
+        async function submitMove() {
+            if (!moveState) return;
+            const new_category = document.getElementById('modalCategory').value.trim();
+            const new_filename = document.getElementById('modalFilename').value.trim();
+
+            if (!new_category || !new_filename) return alert("Fields cannot be empty");
+
+            try {
+                const res = await fetch('/api/v1/dataset/move', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        old_category: moveState.old_category,
+                        old_filename: moveState.old_filename,
+                        new_category,
+                        new_filename
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || "Move failed");
+                closeMoveModal();
+                fetchDataset();
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        // Init
+        fetchDataset();
+    </script>
+</body>
+</html>

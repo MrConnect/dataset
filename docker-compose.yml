@@ -17,8 +17,8 @@ services:
       - ALLOW_LOCAL_NETWORK=${ALLOW_LOCAL_NETWORK:-false}
       - CELERY_ENABLED=${CELERY_ENABLED:-false}
     volumes:
-      - dataset_data:/app/dataset
-      - storage_data:/app/storage
+      - ./backend/dataset:/app/dataset
+      - ./backend/storage:/app/storage
     depends_on:
       redis:
         condition: service_healthy
@@ -48,8 +48,8 @@ services:
       - ALLOW_LOCAL_NETWORK=${ALLOW_LOCAL_NETWORK:-false}
       - CELERY_ENABLED=true
     volumes:
-      - dataset_data:/app/dataset
-      - storage_data:/app/storage
+      - ./backend/dataset:/app/dataset
+      - ./backend/storage:/app/storage
     depends_on:
       redis:
         condition: service_healthy
@@ -74,10 +74,6 @@ services:
       - tagger-network
 
 volumes:
-  dataset_data:
-    driver: local
-  storage_data:
-    driver: local
   redis_data:
     driver: local
 
