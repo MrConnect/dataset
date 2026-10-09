@@ -134,10 +134,11 @@ class VideoDetector {
             firstController.loadImportedSegments(segments).then(success => {
               sendResponse({ ok: success });
             });
-          } else {
-            sendResponse({ ok: false });
+            return true; // Keep channel open for async response
           }
-          return true; // Keep channel open for async response
+          // If this frame has no controllers (e.g. top frame on a streaming site), 
+          // DO NOT sendResponse. Let the iframe containing the video respond instead.
+          break;
         }
 
         case 'GET_ACTIVE_TAB_DATA': {
