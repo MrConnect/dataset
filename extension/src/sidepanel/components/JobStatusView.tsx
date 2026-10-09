@@ -175,17 +175,41 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
                     </div>
                   )}
 
-                  {!isFinished && (
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px', gap: '8px' }}>
+                    {!isFinished && (
                       <button
                         className="btn btn-secondary btn-sm"
                         onClick={() => handleCancelJob(job.job_id)}
                         style={{ color: 'var(--accent-red)' }}
                       >
-                        Cancel Job
+                        Cancel
                       </button>
-                    </div>
-                  )}
+                    )}
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => {
+                        const jobData = job as any;
+                        if (jobData.segments && jobData.segments.length > 0) {
+                          const exportData = jobData.segments.map((s: any) => ({
+                            start_seconds: s.start_seconds,
+                            end_seconds: s.end_seconds,
+                            categories: s.categories
+                          }));
+                          const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `${job.job_id}_export.json`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        } else {
+                          alert('No segments found for this job.');
+                        }
+                      }}
+                    >
+                      Export JSON
+                    </button>
+                  </div>
                 </div>
               );
             })}
