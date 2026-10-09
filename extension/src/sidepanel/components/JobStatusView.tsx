@@ -42,19 +42,24 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
     }
   };
 
+  const handleDeleteJob = async (jobId: string) => {
+    if (!confirm('Are you sure you want to delete this job and all its data?')) return;
+    try {
+      await ApiClient.deleteJob(jobId);
+      fetchJobs();
+    } catch (err: any) {
+      alert(`Error deleting job: ${err.message}`);
+    }
+  };
+
   const getStatusColor = (status: JobStatus) => {
     switch (status) {
-      case 'completed':
-        return 'var(--accent-green)';
-      case 'failed':
-        return 'var(--accent-red)';
-      case 'cancelled':
-        return '#64748b';
+      case 'completed': return 'var(--accent-green)';
+      case 'failed': return 'var(--accent-red)';
+      case 'cancelled': return '#64748b';
       case 'downloading':
-      case 'processing':
-        return '#38bdf8';
-      default:
-        return 'var(--accent-amber)';
+      case 'processing': return '#38bdf8';
+      default: return 'var(--accent-amber)';
     }
   };
 
@@ -104,7 +109,7 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
               <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportJson} />
             </label>
             <button className="btn btn-secondary btn-sm" onClick={fetchJobs} disabled={loading}>
-              {loading ? '...' : 'Refresh'}
+              <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
             </button>
           </div>
         </div>
@@ -117,97 +122,59 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
 
         {jobs.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#64748b', fontSize: '11px', padding: '16px' }}>
-            No processing jobs found yet. Submit segments from the Tagging tab.
+            No processing jobs found yet.
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {jobs.map((job) => {
               const isFinished = job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
-
               return (
-                <div
-                  key={job.job_id}
-                  style={{
-                    padding: '8px 10px',
-                    backgroundColor: 'var(--bg-primary)',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-color)',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                    <span 
-                      style={{ fontWeight: 600, fontSize: '12px', color: '#38bdf8', cursor: 'pointer' }}
-                      title="Click to copy Job ID"
-                      onClick={() => {
-                        navigator.clipboard.writeText(job.job_id);
-                        alert('Copied Job ID: ' + job.job_id);
-                      }}
-                    >
-                      {job.job_id} 📋
+                <div key={job.job_id} style={{ padding: '6px 8px', backgroundColor: 'var(--bg-primary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span style={{ fontWeight: 600, fontSize: '11px', color: '#38bdf8', cursor: 'pointer' }} title="Copy ID" onClick={() => { navigator.clipboard.writeText(job.job_id); alert('Copied Job ID: ' + job.job_id); }}>
+                        {job.job_id.substring(0, 8)}...
+                      </span>
+                    </div>
+                    <span style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', color: getStatusColor(job.status) }}>
+                      {job.status}
                     </span>
-                    <span
-                      style={{
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        color: getStatusColor(job.status),
-                      }}
-                    >
-                      ● {job.status}
-                    </span>
-                  </div>
-
-                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', marginTop: '2px' }}>
-                    <span>Segments: {job.segments_count}</span>
-                    {job.created_at && <span>{new Date(job.created_at).toLocaleTimeString()}</span>}
                   </div>
 
                   {job.progress !== undefined && !isFinished && (
-                    <div style={{ width: '100%', height: '4px', background: '#334155', borderRadius: '2px', margin: '6px 0', overflow: 'hidden' }}>
+                    <div style={{ width: '100%', height: '4px', background: '#334155', borderRadius: '2px', margin: '4px 0', overflow: 'hidden' }}>
                       <div style={{ width: `${job.progress}%`, height: '100%', background: '#3b82f6', transition: 'width 0.3s' }} />
                     </div>
                   )}
 
                   {job.error && (
-                    <div style={{ color: 'var(--accent-red)', fontSize: '10px', marginTop: '4px', wordBreak: 'break-all' }}>
+                    <div style={{ color: 'var(--accent-red)', fontSize: '10px', marginTop: '2px', wordBreak: 'break-all' }}>
                       Error: {job.error}
                     </div>
                   )}
 
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px', gap: '8px' }}>
-                    {!isFinished && (
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => handleCancelJob(job.job_id)}
-                        style={{ color: 'var(--accent-red)' }}
-                      >
-                        Cancel
-                      </button>
-                    )}
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => {
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
+                      {job.segments_count} cuts
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px' }} onClick={() => {
                         const jobData = job as any;
                         if (jobData.segments && jobData.segments.length > 0) {
-                          const exportData = jobData.segments.map((s: any) => ({
-                            start_seconds: s.start_seconds,
-                            end_seconds: s.end_seconds,
-                            categories: s.categories
-                          }));
+                          const exportData = jobData.segments.map((s: any) => ({ start_seconds: s.start_seconds, end_seconds: s.end_seconds, categories: s.categories }));
                           const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
                           const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          a.download = `${job.job_id}_export.json`;
-                          a.click();
-                          URL.revokeObjectURL(url);
-                        } else {
-                          alert('No segments found for this job.');
-                        }
-                      }}
-                    >
-                      Export JSON
-                    </button>
+                          const a = document.createElement('a'); a.href = url; a.download = `${job.job_id}_export.json`; a.click(); URL.revokeObjectURL(url);
+                        } else alert('No segments found for this job.');
+                      }}>
+                        Export
+                      </button>
+                      {!isFinished ? (
+                        <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px', color: 'var(--accent-red)' }} onClick={() => handleCancelJob(job.job_id)}>Cancel</button>
+                      ) : (
+                        <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px', color: 'var(--accent-red)' }} onClick={() => handleDeleteJob(job.job_id)}>Delete</button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );

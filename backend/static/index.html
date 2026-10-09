@@ -173,8 +173,8 @@
         // Format Utilities
         function formatLabelName(id) {
             if (!id) return "Unknown";
-            if (id === "_downloads") return "📥 Full Downloaded Movies";
-            if (id === "_database") return "⚙️ System Database";
+            
+            
             return id.replace(/[-_]/g, ' ').replace(/\b\w/g, w => w.toUpperCase());
         }
         function formatBytes(bytes) {
@@ -215,10 +215,19 @@
             const container = document.getElementById('folderList');
             container.innerHTML = currentDataset.map(cat => {
                 const isActive = currentCategory && currentCategory.name === cat.name ? 'active' : '';
+                
+                // Determine icon based on system folder or normal folder
+                let iconSvg = `<svg class="w-5 h-5 text-sky-400 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path></svg>`;
+                if (cat.name === "_downloads") {
+                    iconSvg = `<svg class="w-5 h-5 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>`;
+                } else if (cat.name === "_database") {
+                    iconSvg = `<svg class="w-5 h-5 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path></svg>`;
+                }
+                
                 return `
                     <div class="folder-item ${isActive}" onclick="openFolder('${cat.name}')" data-id="${cat.name}">
-                        <svg class="w-5 h-5 text-sky-400 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path></svg>
-                        <div class="flex-1 truncate text-sm text-slate-200">${formatLabelName(cat.name)}</div>
+                        ${iconSvg}
+                        <div class="flex-1 truncate text-sm text-slate-200">${cat.display_name || formatLabelName(cat.name)}</div>
                         <div class="text-xs text-slate-500">${cat.videos.length}</div>
                     </div>
                 `;
@@ -246,7 +255,7 @@
             selectedIndices.clear();
             lastSelectedIndex = null;
             
-            document.getElementById('currentFolderName').innerText = formatLabelName(catId);
+            document.getElementById('currentFolderName').innerText = currentCategory.display_name || formatLabelName(catId);
             updateSelectionStatus();
             renderSidebar();
             renderFiles();
@@ -350,7 +359,7 @@
         }
 
         // Keyboard Shortcuts
-        document.getElementById('fileExplorer').addEventListener('keydown', (e) => {
+        document.addEventListener('keydown', (e) => {
             if (!currentCategory) return;
             
             // Ctrl + A
@@ -362,7 +371,7 @@
             }
             // Delete key
             else if (e.key === 'Delete' || e.key === 'Backspace') {
-                if (selectedIndices.size > 0) {
+                if (selectedIndices.size > 0 && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
                     e.preventDefault();
                     handleMenuAction('delete');
                 }
@@ -418,6 +427,17 @@
             if (action === 'preview') {
                 const v = selectedFiles[0];
                 const fileUrl = v.url || `/media/${currentCategory.name}/${v.filename}`;
+                
+                const isVideo = v.filename.match(/\.(mp4|mkv|webm|ts|avi)$/i);
+                if (!isVideo) {
+                    // Force download for non-videos like tagger.db
+                    const a = document.createElement('a');
+                    a.href = fileUrl;
+                    a.download = v.filename;
+                    a.click();
+                    return;
+                }
+
                 document.getElementById('previewTitle').innerText = v.filename;
                 const vidEl = document.getElementById('previewVideo');
                 vidEl.src = fileUrl;

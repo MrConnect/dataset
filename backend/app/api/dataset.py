@@ -2,12 +2,16 @@ import os
 import shutil
 import time
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import zipfile
 import asyncio
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.db.session import get_db
+from app.models.category import Category
 from app.config import settings
 
 router = APIRouter()
@@ -42,9 +46,13 @@ def get_target_path(category: str, filename: str = "") -> Path:
     return d
 
 @router.get("/")
-async def list_dataset():
+async def list_dataset(db: AsyncSession = Depends(get_db)):
     dataset_dir = get_dataset_dir()
     categories = []
+    
+    # Map DB category IDs to their real names
+    db_res = await db.execute(select(Category))
+    db_categories = {c.id: c.name for c in db_res.scalars().all()}
     
     # 1. Standard Dataset Categories
     for cat_dir in dataset_dir.iterdir():
@@ -57,8 +65,16 @@ async def list_dataset():
                     "created_at": video_file.stat().st_ctime,
                     "url": f"/media/{cat_dir.name}/{video_file.name}"
                 })
+            
+            # Format label name based on DB, fallback to formatted folder name
+            raw_name = cat_dir.name
+            display_name = db_categories.get(raw_name)
+            if not display_name:
+                display_name = raw_name.replace("_", " ").title()
+
             categories.append({
-                "name": cat_dir.name,
+                "name": raw_name,
+                "display_name": display_name,
                 "videos": sorted(videos, key=lambda x: x["created_at"], reverse=True)
             })
             
@@ -75,13 +91,18 @@ async def list_dataset():
                     "url": f"/storage/downloads/{file.name}"
                 })
         if downloads:
-            categories.append({"name": "_downloads", "videos": sorted(downloads, key=lambda x: x["created_at"], reverse=True)})
+            categories.append({
+                "name": "_downloads",
+                "display_name": "System Downloads",
+                "videos": sorted(downloads, key=lambda x: x["created_at"], reverse=True)
+            })
 
     # 3. System Database
     db_path = Path(settings.BASE_STORAGE_DIR) / "tagger.db"
     if db_path.exists():
         categories.append({
             "name": "_database",
+            "display_name": "System Database",
             "videos": [{
                 "filename": db_path.name,
                 "size": db_path.stat().st_size,

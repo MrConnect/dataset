@@ -245,6 +245,23 @@ async def list_jobs(
     return results
 
 
+@router.delete("/jobs/{job_id}")
+async def delete_job(
+    job_id: str,
+    _auth: Annotated[str, Depends(verify_api_key)],
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(Job).where(Job.id == job_id)
+    res = await db.execute(query)
+    job = res.scalar_one_or_none()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    await db.delete(job)
+    await db.commit()
+    return {"ok": True}
+
 @router.post("/jobs/{job_id}/cancel")
 async def cancel_job(
     job_id: str,

@@ -139,4 +139,18 @@ export class ApiClient {
 
     return await res.json();
   }
+
+  static async deleteJob(jobId: string): Promise<void> {
+    const baseUrl = await this.getBaseUrl();
+    const headers = await this.getHeaders();
+    const res = await fetch(`${baseUrl}/api/v1/jobs/${encodeURIComponent(jobId)}`, {
+      method: 'DELETE',
+      headers,
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || `Failed to delete job (${res.status})`);
+    }
+  }
 }
