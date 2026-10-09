@@ -309,11 +309,11 @@ class VideoDownloader:
             "-headers", headers_str,
             "-i", url,
             "-c", "copy",
-            "-bsf:a", "aac_adtstoasc",
             str(destination),
         ]
 
         import asyncio
+        from collections import deque
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -322,6 +322,7 @@ class VideoDownloader:
         
         time_regex = re.compile(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})")
         last_pct = -1
+        error_log = deque(maxlen=30)
 
         async def read_stderr():
             nonlocal last_pct
@@ -330,6 +331,7 @@ class VideoDownloader:
                 if not line:
                     break
                 line_str = line.decode('utf-8', errors='replace').strip()
+                error_log.append(line_str)
                 if duration_seconds and progress_callback:
                     match = time_regex.search(line_str)
                     if match:
@@ -348,7 +350,8 @@ class VideoDownloader:
             raise TimeoutError("FFmpeg stream download timed out.")
             
         if process.returncode != 0:
-            raise RuntimeError(f"FFmpeg download failed (code {process.returncode})")
+            err_output = "\n".join(error_log)
+            raise RuntimeError(f"FFmpeg download failed (code {process.returncode}):\n{err_output}")
 
     @staticmethod
     async def _probe_media(file_path: Path) -> float:
