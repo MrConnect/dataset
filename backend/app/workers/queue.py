@@ -96,14 +96,41 @@ class JobWorkerQueue:
                 
                 # Always download source file first (full caching for fast cuts)
                 logger.info(f"Job {job.id} downloading source video from {target_url[:80]}...")
-                source_path, probed_duration = await VideoDownloader.download_source(
-                    job_id=job.id,
-                    media_url=target_url,
-                    media_type=resolved_type,
-                    headers=req_headers,
-                    duration_seconds=job.duration_seconds,
-                    progress_callback=on_download_progress
-                )
+                
+                try:
+                    source_path, probed_duration = await VideoDownloader.download_source(
+                        job_id=job.id,
+                        media_url=target_url,
+                        media_type=resolved_type,
+                        headers=req_headers,
+                        duration_seconds=job.duration_seconds,
+                        progress_callback=on_download_progress
+                    )
+                except RuntimeError as e:
+                    if job.page_url and ("403" in str(e) or "access denied" in str(e).lower() or "forbidden" in str(e).lower() or "code 8" in str(e)):
+                        logger.warning(f"Job {job.id} failed with 403 (IP-lock detected). Attempting server-side native resolution via Playwright on {job.page_url}...")
+                        from app.services.browser_resolver import BrowserResolver
+                        
+                        job.progress = 5
+                        await session.commit()
+                        
+                        new_m3u8, new_referer = await BrowserResolver.resolve_m3u8(job.page_url)
+                        if not new_m3u8:
+                            raise RuntimeError("Server-side Playwright resolution failed to find a valid m3u8 stream.")
+                            
+                        logger.info(f"Server-side resolution succeeded: {new_m3u8[:80]}...")
+                        req_headers["Referer"] = new_referer
+                        
+                        source_path, probed_duration = await VideoDownloader.download_source(
+                            job_id=job.id,
+                            media_url=new_m3u8,
+                            media_type="hls",
+                            headers=req_headers,
+                            duration_seconds=job.duration_seconds,
+                            progress_callback=on_download_progress
+                        )
+                    else:
+                        raise e
                 headers_to_use = req_headers
 
                 if probed_duration and not job.duration_seconds:
