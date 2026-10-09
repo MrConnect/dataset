@@ -6,6 +6,10 @@ import subprocess
 from app.services.downloader import _run_subprocess_sync
 
 
+import hashlib
+
+_DOWNLOAD_LOCKS = {}
+
 class VideoProcessor:
     @staticmethod
     async def extract_segment(
@@ -17,11 +21,6 @@ class VideoProcessor:
         headers: dict[str, str] | None = None,
         **kwargs,
     ) -> float:
-        """
-        Extracts an accurate video segment using frame-accurate two-pass seeking in FFmpeg.
-        Supports both local file paths and direct remote streams (HLS/DASH/MP4).
-        Re-encodes to H.264/AAC with faststart for maximum CVAT and web compatibility.
-        """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         duration = max(0.01, end_seconds - start_seconds)
 
@@ -56,34 +55,61 @@ class VideoProcessor:
             headers_str = "".join(f"{h}\r\n" for h in headers_list)
             remote_args = ["-user_agent", ua, "-headers", headers_str]
 
-        # Frame-accurate cutting: input seeking followed by precise output duration
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-nostdin",
-            "-v", "warning",
+        from app.config import settings
+        
+        # --- NEW LOGIC: FULL VIDEO CACHING ---
+        if is_remote:
+            downloads_dir = Path(settings.BASE_STORAGE_DIR) / "downloads"
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Use URL hash to cache the downloaded video
+            url_hash = hashlib.md5(source_str.encode()).hexdigest()
+            local_full_video = downloads_dir / f"{url_hash}.mkv"
+            
+            # Setup an asyncio lock per URL to prevent multiple workers downloading the same movie simultaneously
+            if url_hash not in _DOWNLOAD_LOCKS:
+                _DOWNLOAD_LOCKS[url_hash] = asyncio.Lock()
+                
+            async with _DOWNLOAD_LOCKS[url_hash]:
+                # If it doesn't exist or is empty, download the ENTIRE stream
+                if not local_full_video.exists() or local_full_video.stat().st_size == 0:
+                    print(f"Downloading FULL video for cache: {url_hash}.mkv")
+                    cmd_download = [
+                        "ffmpeg", "-y", "-nostdin", "-v", "warning",
+                        *remote_args,
+                        "-i", source_str,
+                        "-c", "copy",
+                        str(local_full_video)
+                    ]
+                    # Give it plenty of time (e.g. 1 hour) for huge movies
+                    returncode, _stdout, stderr = await asyncio.to_thread(_run_subprocess_sync, cmd_download, 3600.0)
+                    if returncode != 0:
+                        if local_full_video.exists():
+                            local_full_video.unlink()
+                        raise RuntimeError(f"Failed to download full video: {stderr}")
+
+            # Now we treat the local file as our source!
+            source_str = str(local_full_video)
+            remote_args = [] # Clear remote args since we are reading locally
+
+        # --- FRAME-ACCURATE CUTTING FROM LOCAL FILE ---
+        cmd_cut = [
+            "ffmpeg", "-y", "-nostdin", "-v", "warning",
             *remote_args,
             "-ss", f"{start_seconds:.3f}",
             "-i", source_str,
             "-t", f"{duration:.3f}",
-            "-map", "0:v:0?",
-            "-map", "0:a:0?",
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "22",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-avoid_negative_ts", "make_zero",
-            "-fps_mode", "cfr",
+            "-map", "0:v:0?", "-map", "0:a:0?",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+            "-c:a", "aac", "-b:a", "128k",
+            "-avoid_negative_ts", "make_zero", "-fps_mode", "cfr",
             "-movflags", "+faststart",
-            str(output_path),
+            str(output_path)
         ]
 
-        returncode, _stdout, stderr = await asyncio.to_thread(_run_subprocess_sync, cmd, 600.0)
+        returncode, _stdout, stderr = await asyncio.to_thread(_run_subprocess_sync, cmd_cut, 600.0)
         if returncode != 0:
-            raise RuntimeError(
-                f"FFmpeg segment extraction failed: {stderr}"
-            )
+            raise RuntimeError(f"Segment Cut failed: {stderr}")
 
         # Validate extracted segment with FFprobe
         actual_duration = await VideoProcessor._verify_segment_file(output_path)
