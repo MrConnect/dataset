@@ -311,6 +311,7 @@ class VideoDownloader:
             "-allowed_extensions", "ALL",
             "-allowed_segment_extensions", "ALL",
             "-protocol_whitelist", "file,http,https,tcp,tls,crypto,data",
+            "-extension_picky", "0",
             "-i", url,
             "-c", "copy",
             str(destination),
