@@ -6,81 +6,145 @@
     <title>Dataset Explorer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
-        .folder-card:hover { transform: translateY(-2px); border-color: #38bdf8; }
-        .video-card { transition: all 0.2s; }
-        .video-card:hover { border-color: #38bdf8; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.5); }
-        .modal-overlay { backdrop-filter: blur(4px); }
-        .checkbox-custom { width: 1.25rem; height: 1.25rem; border-radius: 0.25rem; cursor: pointer; accent-color: #0ea5e9; }
+        body, html { height: 100%; margin: 0; overflow: hidden; background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+        
+        /* Layout */
+        .layout { display: flex; height: 100vh; flex-direction: column; }
+        .main-container { display: flex; flex: 1; overflow: hidden; }
+        
+        /* Sidebar */
+        .sidebar { width: 280px; background-color: #1e293b; border-right: 1px solid #334155; overflow-y: auto; display: flex; flex-direction: column; }
+        .folder-item { padding: 10px 16px; display: flex; align-items: center; gap: 12px; cursor: pointer; border-left: 3px solid transparent; user-select: none; }
+        .folder-item:hover { background-color: #334155; }
+        .folder-item.active { background-color: #0ea5e920; border-left-color: #0ea5e9; }
+        
+        /* File Grid */
+        .file-explorer { flex: 1; display: flex; flex-direction: column; background-color: #0f172a; }
+        .file-grid { flex: 1; overflow-y: auto; padding: 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; align-content: start; }
+        
+        /* File Item */
+        .file-item { 
+            background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; overflow: hidden; cursor: pointer; user-select: none;
+            transition: transform 0.1s, border-color 0.1s, box-shadow 0.1s;
+        }
+        .file-item:hover { border-color: #64748b; }
+        .file-item.selected { border-color: #0ea5e9; background-color: #0ea5e920; box-shadow: 0 0 0 1px #0ea5e9; }
+        
+        /* Context Menu */
+        .context-menu { position: absolute; background-color: #1e293b; border: 1px solid #334155; border-radius: 6px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); z-index: 100; min-width: 180px; padding: 6px 0; display: none; }
+        .context-menu-item { padding: 8px 16px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #e2e8f0; }
+        .context-menu-item:hover { background-color: #334155; }
+        .context-menu-item.danger { color: #f43f5e; }
+        .context-menu-item.danger:hover { background-color: #f43f5e20; }
+        .context-divider { height: 1px; background-color: #334155; margin: 4px 0; }
+        
+        /* Modals */
+        .modal-overlay { position: fixed; inset: 0; background-color: rgba(15, 23, 42, 0.9); backdrop-filter: blur(4px); display: none; justify-content: center; align-items: center; z-index: 200; }
+        .modal-content { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); width: 100%; max-width: 500px; padding: 24px; }
     </style>
 </head>
-<body class="min-h-screen flex flex-col">
-    <!-- Navbar -->
-    <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-10 shadow-md">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-            <div class="flex items-center gap-3 cursor-pointer" onclick="goHome()">
-                <div class="w-8 h-8 rounded bg-gradient-to-br from-sky-500 to-indigo-500 flex items-center justify-center font-bold text-white shadow-lg">V</div>
-                <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-sky-400 to-indigo-400">Dataset Explorer</h1>
+<body>
+    <div class="layout">
+        <!-- Header -->
+        <header class="bg-slate-900 border-b border-slate-800 h-14 flex items-center justify-between px-4 shrink-0 shadow-sm z-10">
+            <div class="flex items-center gap-3">
+                <div class="w-7 h-7 rounded bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center font-bold text-white text-xs">V</div>
+                <h1 class="text-lg font-semibold text-slate-200">Dataset Explorer</h1>
             </div>
-            <div id="stats" class="text-sm font-medium text-slate-400 bg-slate-800 px-4 py-1.5 rounded-full border border-slate-700">Loading...</div>
-        </div>
-    </header>
-
-    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <!-- Breadcrumb -->
-        <div class="flex items-center gap-2 mb-6 text-sm font-medium text-slate-400">
-            <button onclick="goHome()" class="hover:text-sky-400 transition-colors flex items-center gap-1">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
-                Home
-            </button>
-            <span id="breadcrumbDivider" class="hidden">/</span>
-            <span id="breadcrumbCurrent" class="text-slate-200 hidden font-bold"></span>
-        </div>
-
-        <!-- Folders View -->
-        <div id="foldersView" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
-
-        <!-- Files View -->
-        <div id="filesView" class="hidden">
-            <!-- Toolbar for Bulk Actions -->
-            <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 flex flex-wrap gap-4 items-center justify-between mb-6 shadow-sm">
-                <div class="flex items-center gap-4">
-                    <label class="flex items-center gap-2 text-sm font-medium text-white cursor-pointer select-none">
-                        <input type="checkbox" id="selectAllCheckbox" class="checkbox-custom" onchange="toggleSelectAll(this)">
-                        Select All (<span id="selectedCount">0</span>)
-                    </label>
-                    <div class="h-6 w-px bg-slate-700"></div>
-                    <button onclick="bulkMove()" id="btnBulkMove" disabled class="disabled:opacity-50 disabled:cursor-not-allowed bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded transition-colors shadow-sm">Move Selected</button>
-                    <button onclick="bulkDelete()" id="btnBulkDelete" disabled class="disabled:opacity-50 disabled:cursor-not-allowed bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white border border-rose-600/30 text-sm px-4 py-2 rounded transition-colors shadow-sm">Delete Selected</button>
-                </div>
-                <button onclick="downloadZip()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-2 px-4 rounded shadow-sm flex items-center gap-2 transition-colors">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                    Download ZIP (96h)
+            <div class="flex items-center gap-4">
+                <div id="statusText" class="text-xs font-medium text-slate-400">Loading...</div>
+                <button onclick="fetchDataset()" class="text-slate-400 hover:text-white p-1 rounded" title="Refresh">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                 </button>
             </div>
-            
-            <!-- Files Grid -->
-            <div id="filesGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
-        </div>
-    </main>
+        </header>
 
-    <!-- Bulk/Single Move Modal -->
-    <div id="moveModal" class="fixed inset-0 bg-slate-900/90 modal-overlay hidden items-center justify-center z-50">
-        <div class="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md border border-slate-700">
-            <h3 id="moveModalTitle" class="text-xl font-bold mb-6 text-white">Move / Rename</h3>
+        <div class="main-container">
+            <!-- Sidebar (Folders) -->
+            <aside class="sidebar" id="sidebar">
+                <div class="text-xs font-semibold text-slate-500 tracking-wider uppercase px-4 py-3 border-b border-slate-800">Labels / Categories</div>
+                <div id="folderList" class="flex-1 overflow-y-auto py-2">
+                    <!-- Folders render here -->
+                </div>
+            </aside>
+
+            <!-- Main File Area -->
+            <main class="file-explorer" id="fileExplorer" tabindex="0">
+                <!-- Toolbar -->
+                <div class="h-12 bg-slate-800/50 border-b border-slate-800 flex items-center px-6 justify-between shrink-0">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-sky-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path></svg>
+                        <span id="currentFolderName" class="font-semibold text-slate-200">Select a folder</span>
+                    </div>
+                    <div class="text-xs text-slate-400" id="selectionStatus"></div>
+                </div>
+
+                <!-- Grid -->
+                <div class="file-grid" id="fileGrid" onclick="clearSelection(event)">
+                    <!-- Files render here -->
+                    <div class="col-span-full flex flex-col items-center justify-center h-full text-slate-500 mt-20">
+                        <svg class="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                        <p>Select a label from the sidebar to view files</p>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Custom Context Menu -->
+    <div id="contextMenu" class="context-menu">
+        <div class="context-menu-item" onclick="handleMenuAction('preview')">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            Play / Preview
+        </div>
+        <div class="context-divider"></div>
+        <div class="context-menu-item" onclick="handleMenuAction('move')">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+            Move / Rename
+        </div>
+        <div class="context-menu-item" onclick="handleMenuAction('download')">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            Download
+        </div>
+        <div class="context-divider"></div>
+        <div class="context-menu-item danger" onclick="handleMenuAction('delete')">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            Delete
+        </div>
+    </div>
+
+    <!-- Move/Rename Modal -->
+    <div id="moveModal" class="modal-overlay">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h3 id="moveModalTitle" class="text-lg font-bold mb-5 text-white">Move / Rename</h3>
             <div class="space-y-4">
                 <div>
-                    <label class="block text-sm font-medium text-slate-400 mb-1.5">Destination Category (Folder)</label>
-                    <input id="modalCategory" type="text" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:border-sky-500 outline-none">
+                    <label class="block text-sm font-medium text-slate-400 mb-1">Destination Label (Folder)</label>
+                    <input id="modalCategory" type="text" class="w-full bg-slate-900 border border-slate-700 rounded p-2.5 text-sm text-white focus:border-sky-500 outline-none">
                 </div>
                 <div id="renameContainer">
-                    <label class="block text-sm font-medium text-slate-400 mb-1.5">New Filename</label>
-                    <input id="modalFilename" type="text" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:border-sky-500 outline-none">
+                    <label class="block text-sm font-medium text-slate-400 mb-1">New Filename</label>
+                    <input id="modalFilename" type="text" class="w-full bg-slate-900 border border-slate-700 rounded p-2.5 text-sm text-white focus:border-sky-500 outline-none">
                 </div>
             </div>
-            <div class="flex justify-end gap-3 mt-8">
-                <button onclick="closeMoveModal()" class="px-5 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm transition-colors">Cancel</button>
-                <button onclick="submitMove()" class="px-5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium shadow-lg transition-colors">Apply</button>
+            <div class="flex justify-end gap-3 mt-6">
+                <button onclick="closeMoveModal()" class="px-4 py-2 rounded bg-slate-700 hover:bg-slate-600 text-sm">Cancel</button>
+                <button onclick="submitMove()" class="px-4 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div id="previewModal" class="modal-overlay">
+        <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-2xl w-full max-w-4xl overflow-hidden" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center p-3 border-b border-slate-700 bg-slate-900">
+                <h3 id="previewTitle" class="text-sm font-medium text-slate-200 truncate"></h3>
+                <button onclick="closePreview()" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="aspect-video bg-black relative">
+                <video id="previewVideo" class="w-full h-full" controls controlsList="nodownload"></video>
             </div>
         </div>
     </div>
@@ -88,10 +152,11 @@
     <script>
         let currentDataset = [];
         let currentCategory = null;
-        let selectedFiles = new Set();
-        let actionState = null; // Stores info for move operations
+        
+        let selectedIndices = new Set();
+        let lastSelectedIndex = null; // For Shift+Click
 
-        // Intersection Observer for Lazy Loading Videos
+        // Lazy loading videos
         const videoObserver = new IntersectionObserver((entries, observer) => {
             entries.forEach(entry => {
                 if (entry.isIntersecting) {
@@ -103,260 +168,341 @@
                     observer.unobserve(video);
                 }
             });
-        }, { rootMargin: "200px" });
+        }, { rootMargin: "100px" });
 
+        // Format Utilities
         function formatLabelName(id) {
             if (!id) return "Unknown";
             return id.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         }
-
         function formatBytes(bytes) {
             if (!+bytes) return '0 B';
             const k = 1024, i = Math.floor(Math.log(bytes) / Math.log(k));
             return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${['B', 'KB', 'MB', 'GB'][i]}`;
         }
 
+        // Fetch Data
         async function fetchDataset() {
             try {
                 const res = await fetch('/api/v1/dataset/');
                 const data = await res.json();
                 currentDataset = data.categories || [];
-                updateStats();
+                
+                let totalVids = 0, totalSize = 0;
+                currentDataset.forEach(cat => {
+                    totalVids += cat.videos.length;
+                    totalSize += cat.videos.reduce((a, v) => a + v.size, 0);
+                });
+                document.getElementById('statusText').innerText = `${currentDataset.length} Folders | ${totalVids} Items | ${formatBytes(totalSize)}`;
+                
+                renderSidebar();
+                
                 if (currentCategory) {
                     const exists = currentDataset.find(c => c.name === currentCategory.name);
-                    if (exists) openCategory(exists.name);
-                    else goHome();
-                } else {
-                    renderFolders();
+                    if (exists) openFolder(exists.name);
+                    else clearFolderView();
                 }
             } catch (err) {
                 console.error(err);
-                document.getElementById('foldersView').innerHTML = `<div class="col-span-full text-center py-10 text-rose-400">Error loading dataset.</div>`;
+                document.getElementById('statusText').innerText = "Error loading data";
             }
         }
 
-        function updateStats() {
-            let totalVids = 0, totalSize = 0;
-            currentDataset.forEach(cat => {
-                totalVids += cat.videos.length;
-                totalSize += cat.videos.reduce((a, v) => a + v.size, 0);
-            });
-            document.getElementById('stats').innerText = `${currentDataset.length} Labels | ${totalVids} Videos | ${formatBytes(totalSize)}`;
-        }
-
-        function goHome() {
-            currentCategory = null;
-            selectedFiles.clear();
-            document.getElementById('foldersView').classList.remove('hidden');
-            document.getElementById('filesView').classList.add('hidden');
-            document.getElementById('breadcrumbDivider').classList.add('hidden');
-            document.getElementById('breadcrumbCurrent').classList.add('hidden');
-            renderFolders();
-        }
-
-        function renderFolders() {
-            const container = document.getElementById('foldersView');
-            if (currentDataset.length === 0) {
-                container.innerHTML = `<div class="col-span-full text-center py-20 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">No categories found. Start tagging!</div>`;
-                return;
-            }
+        // Render Sidebar
+        function renderSidebar() {
+            const container = document.getElementById('folderList');
             container.innerHTML = currentDataset.map(cat => {
-                const niceName = formatLabelName(cat.name);
+                const isActive = currentCategory && currentCategory.name === cat.name ? 'active' : '';
                 return `
-                    <div onclick="openCategory('${cat.name}')" class="folder-card bg-slate-800 rounded-xl p-5 border border-slate-700 cursor-pointer flex flex-col group shadow-sm">
-                        <div class="flex items-start justify-between mb-4">
-                            <div class="p-3 bg-indigo-500/10 rounded-lg group-hover:bg-indigo-500/20 transition-colors">
-                                <svg class="w-8 h-8 text-indigo-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path></svg>
-                            </div>
-                            <span class="text-xs font-semibold px-2.5 py-1 bg-slate-900 text-slate-300 rounded-full border border-slate-700">${cat.videos.length}</span>
-                        </div>
-                        <h3 class="text-lg font-bold text-white mb-1 truncate">${niceName}</h3>
-                        <p class="text-[11px] text-slate-500 mt-auto">ID: ${cat.name}</p>
+                    <div class="folder-item ${isActive}" onclick="openFolder('${cat.name}')" data-id="${cat.name}">
+                        <svg class="w-5 h-5 text-sky-400 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path></svg>
+                        <div class="flex-1 truncate text-sm text-slate-200">${formatLabelName(cat.name)}</div>
+                        <div class="text-xs text-slate-500">${cat.videos.length}</div>
                     </div>
                 `;
             }).join('');
         }
 
-        function openCategory(catId) {
-            currentCategory = currentDataset.find(c => c.name === catId);
-            if (!currentCategory) return;
-            selectedFiles.clear();
-            updateBulkButtons();
-
-            document.getElementById('foldersView').classList.add('hidden');
-            document.getElementById('filesView').classList.remove('hidden');
-            document.getElementById('breadcrumbDivider').classList.remove('hidden');
-            document.getElementById('breadcrumbCurrent').classList.remove('hidden');
-            document.getElementById('breadcrumbCurrent').innerText = formatLabelName(catId);
-            document.getElementById('selectAllCheckbox').checked = false;
-
-            renderFiles();
+        function clearFolderView() {
+            currentCategory = null;
+            selectedIndices.clear();
+            lastSelectedIndex = null;
+            document.getElementById('currentFolderName').innerText = "Select a folder";
+            document.getElementById('selectionStatus').innerText = "";
+            document.getElementById('fileGrid').innerHTML = `
+                <div class="col-span-full flex flex-col items-center justify-center h-full text-slate-500 mt-20">
+                    <svg class="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                    <p>Select a label from the sidebar to view files</p>
+                </div>
+            `;
+            renderSidebar();
         }
 
-        function renderFiles() {
-            const container = document.getElementById('filesGrid');
-            container.innerHTML = '';
+        // Open Folder
+        function openFolder(catId) {
+            currentCategory = currentDataset.find(c => c.name === catId);
+            selectedIndices.clear();
+            lastSelectedIndex = null;
             
+            document.getElementById('currentFolderName').innerText = formatLabelName(catId);
+            updateSelectionStatus();
+            renderSidebar();
+            renderFiles();
+            
+            document.getElementById('fileExplorer').focus();
+        }
+
+        // Render Files
+        function renderFiles() {
+            const container = document.getElementById('fileGrid');
             if (currentCategory.videos.length === 0) {
-                container.innerHTML = `<div class="col-span-full text-center py-20 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">Empty Label.</div>`;
+                container.innerHTML = `<div class="col-span-full text-center py-20 text-slate-500">Folder is empty.</div>`;
                 return;
             }
 
-            currentCategory.videos.forEach(v => {
+            container.innerHTML = currentCategory.videos.map((v, index) => {
+                const isSel = selectedIndices.has(index) ? 'selected' : '';
                 const vidUrl = `/media/${currentCategory.name}/${v.filename}`;
-                const isChecked = selectedFiles.has(v.filename) ? 'checked' : '';
-                
-                const card = document.createElement('div');
-                card.className = "video-card bg-slate-800 rounded-lg border border-slate-700 overflow-hidden flex flex-col relative shadow-sm";
-                card.innerHTML = `
-                    <!-- Selection Checkbox overlay -->
-                    <div class="absolute top-2 left-2 z-10">
-                        <input type="checkbox" class="checkbox-custom file-checkbox shadow" value="${v.filename}" ${isChecked} onchange="toggleFile('${v.filename}', this.checked)">
-                    </div>
-                    <!-- Video Preview (Lazy Loaded) -->
-                    <div class="aspect-video bg-black relative border-b border-slate-700">
-                        <video data-src="${vidUrl}" class="w-full h-full object-contain" preload="metadata" controls controlsList="nodownload"></video>
-                    </div>
-                    <!-- File Info & Actions -->
-                    <div class="p-3 flex-1 flex flex-col justify-between gap-3">
-                        <div>
-                            <div class="text-sm text-slate-200 font-medium truncate mb-1" title="${v.filename}">${v.filename}</div>
+                return `
+                    <div class="file-item ${isSel}" data-index="${index}" onclick="handleFileClick(event, ${index})" ondblclick="handleMenuAction('preview', ${index})" oncontextmenu="handleContextMenu(event, ${index})">
+                        <div class="aspect-video bg-black relative border-b border-slate-700/50 pointer-events-none">
+                            <video data-src="${vidUrl}" class="w-full h-full object-contain" preload="metadata"></video>
+                        </div>
+                        <div class="p-3">
+                            <div class="text-[13px] text-slate-200 font-medium truncate mb-1" title="${v.filename}">${v.filename}</div>
                             <div class="text-[11px] text-slate-500 flex justify-between">
                                 <span>${formatBytes(v.size)}</span>
                                 <span>${new Date(v.created_at * 1000).toLocaleDateString()}</span>
                             </div>
                         </div>
-                        <div class="grid grid-cols-3 gap-1 pt-2 border-t border-slate-700/50">
-                            <button onclick="openSingleMove('${v.filename}')" class="text-[11px] font-medium py-1.5 rounded bg-slate-700/50 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors">Move</button>
-                            <a href="${vidUrl}" download="${v.filename}" class="text-[11px] font-medium py-1.5 rounded bg-sky-900/30 hover:bg-sky-600 text-sky-400 hover:text-white text-center transition-colors">Download</a>
-                            <button onclick="singleDelete('${v.filename}')" class="text-[11px] font-medium py-1.5 rounded bg-rose-900/20 hover:bg-rose-600 text-rose-400 hover:text-white transition-colors">Delete</button>
-                        </div>
                     </div>
                 `;
-                container.appendChild(card);
-                
-                // Observe the video element for lazy loading
-                const videoEl = card.querySelector('video');
-                videoObserver.observe(videoEl);
-            });
+            }).join('');
+
+            // Observe videos
+            container.querySelectorAll('video').forEach(vid => videoObserver.observe(vid));
         }
 
-        function toggleSelectAll(checkbox) {
-            const checkboxes = document.querySelectorAll('.file-checkbox');
-            if (checkbox.checked) {
-                currentCategory.videos.forEach(v => selectedFiles.add(v.filename));
-                checkboxes.forEach(cb => cb.checked = true);
-            } else {
-                selectedFiles.clear();
-                checkboxes.forEach(cb => cb.checked = false);
-            }
-            updateBulkButtons();
-        }
-
-        function toggleFile(filename, isChecked) {
-            if (isChecked) selectedFiles.add(filename);
-            else selectedFiles.delete(filename);
+        // Selection Logic (Windows Explorer Style)
+        function handleFileClick(e, index) {
+            e.stopPropagation();
             
-            const allChecked = selectedFiles.size === currentCategory.videos.length && currentCategory.videos.length > 0;
-            document.getElementById('selectAllCheckbox').checked = allChecked;
-            updateBulkButtons();
+            if (e.ctrlKey || e.metaKey) {
+                // Toggle selection
+                if (selectedIndices.has(index)) selectedIndices.delete(index);
+                else selectedIndices.add(index);
+                lastSelectedIndex = index;
+            } else if (e.shiftKey && lastSelectedIndex !== null) {
+                // Range selection
+                const start = Math.min(lastSelectedIndex, index);
+                const end = Math.max(lastSelectedIndex, index);
+                selectedIndices.clear();
+                for (let i = start; i <= end; i++) {
+                    selectedIndices.add(i);
+                }
+            } else {
+                // Single selection
+                selectedIndices.clear();
+                selectedIndices.add(index);
+                lastSelectedIndex = index;
+            }
+            
+            syncSelectionUI();
         }
 
-        function updateBulkButtons() {
-            const count = selectedFiles.size;
-            document.getElementById('selectedCount').innerText = count;
-            document.getElementById('btnBulkMove').disabled = count === 0;
-            document.getElementById('btnBulkDelete').disabled = count === 0;
+        function clearSelection(e) {
+            // Only clear if clicking on the grid background, not a file
+            if (e.target.id === 'fileGrid') {
+                selectedIndices.clear();
+                lastSelectedIndex = null;
+                syncSelectionUI();
+            }
         }
 
-        function downloadZip() {
-            window.location.href = `/api/v1/dataset/download_folder/${currentCategory.name}`;
+        function syncSelectionUI() {
+            document.querySelectorAll('.file-item').forEach((item, idx) => {
+                if (selectedIndices.has(idx)) item.classList.add('selected');
+                else item.classList.remove('selected');
+            });
+            updateSelectionStatus();
         }
 
-        // Action: Single Delete
-        async function singleDelete(filename) {
-            if (!confirm(`Delete ${filename}?`)) return;
-            try {
-                await fetch(`/api/v1/dataset/${currentCategory.name}/${filename}`, { method: 'DELETE' });
-                fetchDataset();
-            } catch (e) { alert("Delete failed"); }
+        function updateSelectionStatus() {
+            const statusEl = document.getElementById('selectionStatus');
+            if (!currentCategory) {
+                statusEl.innerText = "";
+            } else if (selectedIndices.size === 0) {
+                statusEl.innerText = `${currentCategory.videos.length} items`;
+            } else {
+                statusEl.innerText = `${selectedIndices.size} items selected`;
+            }
         }
 
-        // Action: Bulk Delete
-        async function bulkDelete() {
-            if (!confirm(`Are you sure you want to delete ${selectedFiles.size} videos?`)) return;
-            try {
-                const promises = Array.from(selectedFiles).map(filename => 
-                    fetch(`/api/v1/dataset/${currentCategory.name}/${filename}`, { method: 'DELETE' })
-                );
-                await Promise.all(promises);
-                selectedFiles.clear();
-                fetchDataset();
-            } catch (e) { alert("Bulk delete encountered errors."); fetchDataset(); }
+        // Keyboard Shortcuts
+        document.getElementById('fileExplorer').addEventListener('keydown', (e) => {
+            if (!currentCategory) return;
+            
+            // Ctrl + A
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                selectedIndices.clear();
+                currentCategory.videos.forEach((_, i) => selectedIndices.add(i));
+                syncSelectionUI();
+            }
+            // Delete key
+            else if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (selectedIndices.size > 0) {
+                    e.preventDefault();
+                    handleMenuAction('delete');
+                }
+            }
+        });
+
+        // Context Menu
+        const ctxMenu = document.getElementById('contextMenu');
+        
+        function handleContextMenu(e, index) {
+            e.preventDefault();
+            
+            // If right-clicked item is not in selection, select ONLY it.
+            if (!selectedIndices.has(index)) {
+                selectedIndices.clear();
+                selectedIndices.add(index);
+                lastSelectedIndex = index;
+                syncSelectionUI();
+            }
+            
+            // Position menu
+            ctxMenu.style.display = 'block';
+            
+            let x = e.pageX;
+            let y = e.pageY;
+            
+            // Prevent overflowing screen
+            if (x + ctxMenu.offsetWidth > window.innerWidth) x = window.innerWidth - ctxMenu.offsetWidth;
+            if (y + ctxMenu.offsetHeight > window.innerHeight) y = window.innerHeight - ctxMenu.offsetHeight;
+            
+            ctxMenu.style.left = x + 'px';
+            ctxMenu.style.top = y + 'px';
         }
 
-        // Action: Open Move Modal (Single)
-        function openSingleMove(filename) {
-            actionState = { type: 'single', old_filename: filename };
-            document.getElementById('moveModalTitle').innerText = 'Move / Rename Video';
-            document.getElementById('modalCategory').value = currentCategory.name;
-            document.getElementById('modalFilename').value = filename;
-            document.getElementById('renameContainer').style.display = 'block';
-            document.getElementById('moveModal').style.display = 'flex';
+        // Hide context menu on normal click
+        document.addEventListener('click', () => {
+            ctxMenu.style.display = 'none';
+        });
+
+        // Context Menu Actions
+        async function handleMenuAction(action, forceIndex = null) {
+            ctxMenu.style.display = 'none';
+            if (forceIndex !== null) {
+                selectedIndices.clear();
+                selectedIndices.add(forceIndex);
+                syncSelectionUI();
+            }
+            
+            if (selectedIndices.size === 0) return;
+            
+            const selectedFiles = Array.from(selectedIndices).map(i => currentCategory.videos[i]);
+
+            if (action === 'preview') {
+                const v = selectedFiles[0];
+                document.getElementById('previewTitle').innerText = v.filename;
+                const vidEl = document.getElementById('previewVideo');
+                vidEl.src = `/media/${currentCategory.name}/${v.filename}`;
+                document.getElementById('previewModal').style.display = 'flex';
+                vidEl.play().catch(e => {});
+            } 
+            else if (action === 'download') {
+                // If entire folder selected, download zip
+                if (selectedIndices.size === currentCategory.videos.length && currentCategory.videos.length > 1) {
+                    window.location.href = `/api/v1/dataset/download_folder/${currentCategory.name}`;
+                } else {
+                    // Download individual files
+                    selectedFiles.forEach(v => {
+                        const link = document.createElement('a');
+                        link.href = `/media/${currentCategory.name}/${v.filename}`;
+                        link.download = v.filename;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                    });
+                }
+            }
+            else if (action === 'delete') {
+                if (!confirm(`Are you sure you want to delete ${selectedFiles.length} item(s)?`)) return;
+                try {
+                    const promises = selectedFiles.map(v => 
+                        fetch(`/api/v1/dataset/${currentCategory.name}/${v.filename}`, { method: 'DELETE' })
+                    );
+                    await Promise.all(promises);
+                    selectedIndices.clear();
+                    fetchDataset();
+                } catch (e) { alert("Delete failed"); }
+            }
+            else if (action === 'move') {
+                const isSingle = selectedFiles.length === 1;
+                document.getElementById('moveModalTitle').innerText = isSingle ? 'Move / Rename' : `Move ${selectedFiles.length} items`;
+                document.getElementById('modalCategory').value = currentCategory.name;
+                
+                if (isSingle) {
+                    document.getElementById('renameContainer').style.display = 'block';
+                    document.getElementById('modalFilename').value = selectedFiles[0].filename;
+                } else {
+                    document.getElementById('renameContainer').style.display = 'none';
+                }
+                document.getElementById('moveModal').style.display = 'flex';
+            }
         }
 
-        // Action: Open Move Modal (Bulk)
-        function bulkMove() {
-            actionState = { type: 'bulk' };
-            document.getElementById('moveModalTitle').innerText = `Move ${selectedFiles.size} Videos`;
-            document.getElementById('modalCategory').value = currentCategory.name;
-            // Hide filename input for bulk moves
-            document.getElementById('renameContainer').style.display = 'none';
-            document.getElementById('moveModal').style.display = 'flex';
-        }
-
+        // Move/Rename Logic
         function closeMoveModal() {
-            actionState = null;
             document.getElementById('moveModal').style.display = 'none';
         }
 
-        // Action: Execute Move (Single or Bulk)
+        function closePreview() {
+            const vidEl = document.getElementById('previewVideo');
+            vidEl.pause();
+            vidEl.src = "";
+            document.getElementById('previewModal').style.display = 'none';
+        }
+
         async function submitMove() {
-            if (!actionState) return;
             const new_category = document.getElementById('modalCategory').value.trim();
-            if (!new_category) return alert("Destination category is required.");
+            if (!new_category) return alert("Destination is required");
+            
+            const selectedFiles = Array.from(selectedIndices).map(i => currentCategory.videos[i]);
+            const isSingle = selectedFiles.length === 1;
 
             try {
-                if (actionState.type === 'single') {
+                if (isSingle) {
                     const new_filename = document.getElementById('modalFilename').value.trim();
                     if (!new_filename) return alert("Filename required");
-                    
                     const res = await fetch('/api/v1/dataset/move', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ old_category: currentCategory.name, old_filename: actionState.old_filename, new_category, new_filename })
+                        body: JSON.stringify({ old_category: currentCategory.name, old_filename: selectedFiles[0].filename, new_category, new_filename })
                     });
                     if (!res.ok) throw new Error((await res.json()).detail);
-                } 
-                else if (actionState.type === 'bulk') {
-                    const promises = Array.from(selectedFiles).map(filename => 
+                } else {
+                    const promises = selectedFiles.map(v => 
                         fetch('/api/v1/dataset/move', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ old_category: currentCategory.name, old_filename: filename, new_category, new_filename: filename })
+                            body: JSON.stringify({ old_category: currentCategory.name, old_filename: v.filename, new_category, new_filename: v.filename })
                         }).then(r => { if (!r.ok) throw new Error(); })
                     );
                     await Promise.all(promises);
-                    selectedFiles.clear();
                 }
                 closeMoveModal();
+                selectedIndices.clear();
                 fetchDataset();
             } catch (err) {
-                alert("Operation failed or partially failed: " + err.message);
+                alert("Operation failed: " + err.message);
                 fetchDataset();
             }
         }
 
+        // Init
         fetchDataset();
     </script>
 </body>
