@@ -20,17 +20,15 @@ def _run_subprocess_sync(cmd: list[str], timeout: float | None = None) -> tuple[
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
             timeout=timeout,
-            encoding='utf-8',
-            errors='replace'
         )
-        return proc.returncode, proc.stdout, proc.stderr
-    except subprocess.TimeoutExpired as e:
-        return -1, e.stdout.decode() if e.stdout else "", f"Command timed out after {timeout}s: {e.stderr.decode() if e.stderr else ''}"
-    except Exception as e:
-        return -1, "", str(e)
-
+        return (
+            proc.returncode,
+            proc.stdout.decode("utf-8", errors="replace"),
+            proc.stderr.decode("utf-8", errors="replace"),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"Process timed out after {timeout} seconds") from exc
 
 
 class StreamExtractor:
@@ -41,11 +39,11 @@ class StreamExtractor:
 
     @staticmethod
     def unpack_dean_edwards(packed_code: str) -> str:
-        pattern = r"return\s+p}\s*\(\s*['"](.*?)['"]\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*['"](.*?)['"]\.split\('\|'\)"
+        pattern = r"return\s+p}\s*\(\s*['\"](.*?)['\"]\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*['\"](.*?)['\"]\.split\('\|'\)"
         match = re.search(pattern, packed_code, re.DOTALL)
         if not match:
             # Fallback to broader match if return p is not present
-            fallback = r"}\s*\(\s*['"](.*?)['"]\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*['"](.*?)['"]\.split\('\|'\)"
+            fallback = r"}\s*\(\s*['\"](.*?)['\"]\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*['\"](.*?)['\"]\.split\('\|'\)"
             match = re.search(fallback, packed_code, re.DOTALL)
             if not match:
                 return ""
@@ -72,7 +70,7 @@ class StreamExtractor:
             if i < len(words) and words[i]:
                 lookup[key] = words[i]
 
-        return re.sub(r"\w+", lambda m: lookup.get(m.group(0), m.group(0)), payload)
+        return re.sub(r"\b\w+\b", lambda m: lookup.get(m.group(0), m.group(0)), payload)
 
     @staticmethod
     async def extract_from_html_page(page_url: str, headers: dict[str, str]) -> tuple[str | None, dict[str, str]]:
@@ -91,32 +89,32 @@ class StreamExtractor:
             async with httpx.AsyncClient(headers=req_headers, timeout=15.0, follow_redirects=True) as client:
                 resp = await client.get(page_url)
                 if resp.status_code != 200:
-                    return None, req_headers
+                    return None
                 html = resp.text
 
             # 1. Look for packed Dean Edwards eval scripts
             eval_blocks = re.findall(r"eval\(function\(p,a,c,k,e,d\).*?split\('\|'\)\)\)", html, re.DOTALL)
             for packed in eval_blocks:
                 unpacked = StreamExtractor.unpack_dean_edwards(packed)
-                m3u8_matches = re.findall(r'https?://[^\s"'\]+?\.m3u8[^\s"'\]*', unpacked)
+                m3u8_matches = re.findall(r'https?://[^\s"\'\\]+?\.m3u8[^\s"\'\\]*', unpacked)
                 if m3u8_matches:
                     return m3u8_matches[0], req_headers
-                mp4_matches = re.findall(r'https?://[^\s"'\]+?\.mp4[^\s"'\]*', unpacked)
+                mp4_matches = re.findall(r'https?://[^\s"\'\\]+?\.mp4[^\s"\'\\]*', unpacked)
                 if mp4_matches:
                     return mp4_matches[0], req_headers
 
             # 2. Look for direct m3u8 in raw HTML
-            direct_m3u8 = re.findall(r'https?://[^\s"'\]+?\.m3u8[^\s"'\]*', html)
+            direct_m3u8 = re.findall(r'https?://[^\s"\'\\]+?\.m3u8[^\s"\'\\]*', html)
             if direct_m3u8:
                 return direct_m3u8[0], req_headers
 
             # 3. Look for direct mp4 in raw HTML
-            direct_mp4 = re.findall(r'https?://[^\s"'\]+?\.mp4[^\s"'\]*', html)
+            direct_mp4 = re.findall(r'https?://[^\s"\'\\]+?\.mp4[^\s"\'\\]*', html)
             if direct_mp4:
                 return direct_mp4[0], req_headers
 
             # 4. Look for MPD
-            direct_mpd = re.findall(r'https?://[^\s"'\]+?\.mpd[^\s"'\]*', html)
+            direct_mpd = re.findall(r'https?://[^\s"\'\\]+?\.mpd[^\s"\'\\]*', html)
             if direct_mpd:
                 return direct_mpd[0], req_headers
 
@@ -231,26 +229,45 @@ class VideoDownloader:
 
     @staticmethod
     async def download_source(
-        target_url: str,
         job_id: str,
+        media_url: str,
         media_type: str,
-        headers: dict[str, str],
+        variant_url: str | None = None,
+        headers: dict[str, str] | None = None,
         duration_seconds: float | None = None,
-        progress_callback = None
+        progress_callback = None,
     ) -> tuple[Path, float]:
         """
-        Downloads the source video exactly once to a temporary file, bypassing simple IP checks.
-        Returns the (local_path, actual_duration).
+        Downloads the source video once per job into temporary storage.
+        Validates anti-SSRF, download limits, and checks integrity with FFprobe.
         """
-        validate_url_safety(target_url)
+        target_url, media_type, req_headers = await VideoDownloader.resolve_stream(
+            media_url=media_url,
+            media_type=media_type,
+            variant_url=variant_url,
+            headers=headers,
+        )
 
-        # Output to .mp4 always, yt-dlp will handle container correctly
-        output_file = settings.temp_path / f"{job_id}_source.mp4"
+        is_hls = media_type == "hls" or ".m3u8" in target_url.lower()
+        is_dash = media_type == "dash" or ".mpd" in target_url.lower()
 
-        if media_type in ("hls", "dash") or target_url.endswith(".m3u8") or ".m3u8" in target_url or ".mpd" in target_url:
-            await VideoDownloader._download_via_ffmpeg(target_url, output_file, headers, duration_seconds, progress_callback, is_hls=True)
+        # Keep HLS in its native MPEG-TS container. Remuxing long HLS streams
+        # directly to MP4 can succeed with exit code 0 while silently dropping
+        # video packets after a damaged/timestamp-sensitive segment. MPEG-TS is
+        # designed for this input and gives the cutter the complete timeline.
+        output_file = settings.temp_path / f"{job_id}_source{'.ts' if is_hls else '.mp4'}"
+
+        if is_hls or is_dash:
+            await VideoDownloader._download_via_ffmpeg(
+                target_url,
+                output_file,
+                req_headers,
+                duration_seconds,
+                progress_callback,
+                is_hls=is_hls,
+            )
         else:
-            await VideoDownloader._download_direct_http(target_url, output_file, headers, progress_callback)
+            await VideoDownloader._download_direct_http(target_url, output_file, req_headers, progress_callback)
 
         # Post-download verification using FFprobe
         duration = await VideoDownloader._probe_media(output_file)
@@ -259,24 +276,37 @@ class VideoDownloader:
     @staticmethod
     async def _download_direct_http(url: str, destination: Path, headers: dict[str, str], progress_callback = None) -> None:
         async with httpx.AsyncClient(headers=headers, timeout=settings.DOWNLOAD_TIMEOUT_SECONDS, follow_redirects=True) as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                total = int(response.headers.get("Content-Length", 0))
-                downloaded = 0
+            async with client.stream("GET", url) as resp:
+                resp.raise_for_status()
+                validate_url_safety(str(resp.url))
+
+                total_bytes = 0
+                max_bytes = settings.MAX_DOWNLOAD_SIZE_BYTES
+                
+                content_length_str = resp.headers.get('Content-Length')
+                content_length = int(content_length_str) if content_length_str and content_length_str.isdigit() else None
+                
                 last_reported_pct = -1
 
                 with open(destination, "wb") as f:
-                    async for chunk in response.aiter_bytes():
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        total_bytes += len(chunk)
+                        if total_bytes > max_bytes:
+                            destination.unlink(missing_ok=True)
+                            raise ValueError(
+                                f"Downloaded file exceeded maximum allowed size of {settings.MAX_DOWNLOAD_SIZE_BYTES} bytes"
+                            )
                         f.write(chunk)
-                        downloaded += len(chunk)
-                        if total > 0 and progress_callback:
-                            pct = int((downloaded / total) * 100)
-                            if pct % 5 == 0 and pct != last_reported_pct:
+                        
+                        if progress_callback and content_length:
+                            pct = min(100, int((total_bytes / content_length) * 100))
+                            if pct > last_reported_pct:
                                 await progress_callback(pct)
                                 last_reported_pct = pct
 
     @staticmethod
     async def _download_via_ffmpeg(url: str, destination: Path, headers: dict[str, str], duration_seconds: float | None = None, progress_callback = None, is_hls: bool = False) -> None:
+        import re
         ua = headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
         
         if is_hls:
@@ -301,9 +331,7 @@ class VideoDownloader:
                 origin = "/".join(ref.split("/")[:3])
                 headers_list.append(f"Origin: {origin}")
             headers_str = "".join(f"{h}\r\n" for h in headers_list)
-
-            codec_args = ["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy"]
-
+            
             cmd = [
                 "ffmpeg",
                 "-y",
@@ -316,16 +344,10 @@ class VideoDownloader:
                 "-reconnect_on_network_error", "1",
                 "-reconnect_on_http_error", "408,429,5xx",
                 "-reconnect_delay_max", "10",
-                "-allowed_extensions", "ALL",
-                "-allowed_segment_extensions", "ALL",
-                "-protocol_whitelist", "file,http,https,tcp,tls,crypto,data",
-                "-extension_picky", "0",
-                "-seg_max_retry", "10",
-                "-http_persistent", "0",
-                "-timeout", "30000000",
-                "-fflags", "+genpts+discardcorrupt",
-                "-i", url
-            ] + codec_args + [str(destination)]
+                "-i", url,
+                "-c", "copy",
+                str(destination)
+            ]
 
         import asyncio
         from collections import deque
@@ -334,7 +356,7 @@ class VideoDownloader:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-
+        
         # Basic progress monitoring parsing ffmpeg/yt-dlp output
         error_log = deque(maxlen=20)
         try:
@@ -402,14 +424,14 @@ class VideoDownloader:
             video_stream = streams[0]
             if not video_stream.get("width") or not video_stream.get("height"):
                 raise ValueError("Downloaded source video stream has invalid dimensions")
-            
             stream_duration = video_stream.get("duration")
             format_duration = data.get("format", {}).get("duration")
-            
             try:
-                duration = float(stream_duration) if stream_duration else float(format_duration)
-                return duration
-            except (ValueError, TypeError):
-                raise ValueError("Could not determine media duration")
-        except json.JSONDecodeError:
-            raise ValueError(f"Failed to parse ffprobe output. Output: {stdout}")
+                duration = float(stream_duration)
+            except (TypeError, ValueError):
+                duration = float(format_duration or 0)
+            if duration <= 0:
+                raise ValueError("Downloaded source has no measurable video duration")
+            return duration
+        except Exception as e:
+            raise ValueError(f"Could not parse media duration from FFprobe: {e}")
