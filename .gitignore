@@ -10,7 +10,10 @@ backend/.pytest_cache/
 # Storage
 backend/data/jobs/
 backend/data/downloads/
-backend/data/dataset/
+backend/dataset/
+backend/storage/temp/
+backend/tagger.db
+files.txt
 
 # Node / Extension
 extension/node_modules/
