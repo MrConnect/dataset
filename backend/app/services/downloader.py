@@ -379,10 +379,10 @@ class VideoDownloader:
                                 last_pct = pct
                     elif progress_callback and is_hls:
                         # yt-dlp progress: [download]  50.0% of ~2.50GiB
-                        m = re.search(r"\[download\]\s+(\d+\.?\d*)%", line_str)
+                        m = re.search(r"\[download\]\s+(\d+\.?\d*)%(?:.*?frag|.*?MiB|.*?GiB)", line_str)
                         if m:
                             pct = min(100, int(float(m.group(1))))
-                            if pct > last_pct:
+                            if pct > last_pct or (last_pct - pct) > 50:
                                 await progress_callback(pct)
                                 last_pct = pct
 
