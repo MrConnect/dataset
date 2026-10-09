@@ -14,4 +14,3 @@ celery>=5.4.0
 pytest>=8.3.3
 pytest-asyncio>=0.24.0
 python-multipart>=0.0.12
-playwright>=1.49.0

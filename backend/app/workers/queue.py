@@ -6,7 +6,6 @@ from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.job import Job, JobSegment
 from app.services.downloader import VideoDownloader
-from app.services.browser_resolver import BrowserResolver
 from app.services.video_processor import VideoProcessor
 from app.services.storage_manager import StorageManager
 
@@ -97,43 +96,14 @@ class JobWorkerQueue:
                 
                 # Always download source file first (full caching for fast cuts)
                 logger.info(f"Job {job.id} downloading source video from {target_url[:80]}...")
-                try:
-                    source_path, probed_duration = await VideoDownloader.download_source(
-                        job_id=job.id,
-                        media_url=target_url,
-                        media_type=resolved_type,
-                        headers=req_headers,
-                        duration_seconds=job.duration_seconds,
-                        progress_callback=on_download_progress
-                    )
-                except RuntimeError as download_error:
-                    # Signed HLS URLs commonly bind their JWT to the browser's IP.
-                    # If the extension captured the URL at home, a server download
-                    # receives 403. Resolve a fresh token from this server IP and retry.
-                    if "403 Forbidden" not in str(download_error) or not job.page_url:
-                        raise
-
-                    logger.warning(
-                        "Job %s received 403; resolving a fresh stream from the server IP",
-                        job.id,
-                    )
-                    server_url, server_headers = await BrowserResolver.resolve_m3u8(job.page_url)
-                    if not server_url:
-                        raise RuntimeError(
-                            "Stream is IP-locked and server-side browser resolution did not capture a replacement HLS URL"
-                        ) from download_error
-
-                    retry_headers = dict(req_headers)
-                    retry_headers.update(server_headers)
-                    source_path, probed_duration = await VideoDownloader.download_source(
-                        job_id=job.id,
-                        media_url=server_url,
-                        media_type="hls",
-                        headers=retry_headers,
-                        duration_seconds=job.duration_seconds,
-                        progress_callback=on_download_progress,
-                    )
-                    req_headers = retry_headers
+                source_path, probed_duration = await VideoDownloader.download_source(
+                    job_id=job.id,
+                    media_url=target_url,
+                    media_type=resolved_type,
+                    headers=req_headers,
+                    duration_seconds=job.duration_seconds,
+                    progress_callback=on_download_progress
+                )
                 headers_to_use = req_headers
 
                 if probed_duration and not job.duration_seconds:
