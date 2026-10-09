@@ -248,11 +248,10 @@ class VideoDownloader:
             headers=headers,
         )
 
-        ext = ".ts" if (media_type == "hls" or ".m3u8" in target_url) else ".mp4"
-        output_file = settings.temp_path / f"{job_id}_source{ext}"
+        output_file = settings.temp_path / f"{job_id}_source.mp4"
 
         if media_type in ("hls", "dash") or target_url.endswith(".m3u8") or ".m3u8" in target_url or ".mpd" in target_url:
-            await VideoDownloader._download_via_ffmpeg(target_url, output_file, req_headers, duration_seconds, progress_callback)
+            await VideoDownloader._download_via_ffmpeg(target_url, output_file, req_headers, duration_seconds, progress_callback, is_hls=True)
         else:
             await VideoDownloader._download_direct_http(target_url, output_file, req_headers, progress_callback)
 
@@ -292,7 +291,7 @@ class VideoDownloader:
                                 last_reported_pct = pct
 
     @staticmethod
-    async def _download_via_ffmpeg(url: str, destination: Path, headers: dict[str, str], duration_seconds: float | None = None, progress_callback = None) -> None:
+    async def _download_via_ffmpeg(url: str, destination: Path, headers: dict[str, str], duration_seconds: float | None = None, progress_callback = None, is_hls: bool = False) -> None:
         import re
         ua = headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
         headers_list = [f"{k}: {v}" for k, v in headers.items() if k.lower() != "user-agent"]
@@ -301,6 +300,8 @@ class VideoDownloader:
             origin = "/".join(ref.split("/")[:3])
             headers_list.append(f"Origin: {origin}")
         headers_str = "".join(f"{h}\r\n" for h in headers_list)
+
+        codec_args = ["-c:v", "copy", "-c:a", "aac"] if is_hls else ["-c", "copy"]
 
         cmd = [
             "ffmpeg",
@@ -312,10 +313,8 @@ class VideoDownloader:
             "-allowed_segment_extensions", "ALL",
             "-protocol_whitelist", "file,http,https,tcp,tls,crypto,data",
             "-extension_picky", "0",
-            "-i", url,
-            "-c", "copy",
-            str(destination),
-        ]
+            "-i", url
+        ] + codec_args + [str(destination)]
 
         import asyncio
         from collections import deque
