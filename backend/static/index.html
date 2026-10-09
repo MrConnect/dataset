@@ -7,9 +7,11 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
-        .folder-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.3); border-color: #38bdf8; }
-        .video-card:hover { border-color: #38bdf8; }
+        .folder-card:hover { transform: translateY(-2px); border-color: #38bdf8; }
+        .video-card { transition: all 0.2s; }
+        .video-card:hover { border-color: #38bdf8; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.5); }
         .modal-overlay { backdrop-filter: blur(4px); }
+        .checkbox-custom { width: 1.25rem; height: 1.25rem; border-radius: 0.25rem; cursor: pointer; accent-color: #0ea5e9; }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
@@ -17,86 +19,68 @@
     <header class="bg-slate-900 border-b border-slate-800 sticky top-0 z-10 shadow-md">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div class="flex items-center gap-3 cursor-pointer" onclick="goHome()">
-                <div class="w-8 h-8 rounded bg-gradient-to-br from-sky-500 to-indigo-500 flex items-center justify-center font-bold text-white shadow-lg">
-                    V
-                </div>
+                <div class="w-8 h-8 rounded bg-gradient-to-br from-sky-500 to-indigo-500 flex items-center justify-center font-bold text-white shadow-lg">V</div>
                 <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-sky-400 to-indigo-400">Dataset Explorer</h1>
             </div>
             <div id="stats" class="text-sm font-medium text-slate-400 bg-slate-800 px-4 py-1.5 rounded-full border border-slate-700">Loading...</div>
         </div>
     </header>
 
-    <!-- Main Content -->
     <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
         <!-- Breadcrumb -->
-        <div class="flex items-center gap-2 mb-8 text-sm font-medium text-slate-400">
+        <div class="flex items-center gap-2 mb-6 text-sm font-medium text-slate-400">
             <button onclick="goHome()" class="hover:text-sky-400 transition-colors flex items-center gap-1">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
                 Home
             </button>
             <span id="breadcrumbDivider" class="hidden">/</span>
-            <span id="breadcrumbCurrent" class="text-slate-200 hidden"></span>
+            <span id="breadcrumbCurrent" class="text-slate-200 hidden font-bold"></span>
         </div>
 
-        <!-- Views Container -->
-        <div id="foldersView" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            <!-- Folders render here -->
-        </div>
+        <!-- Folders View -->
+        <div id="foldersView" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
 
+        <!-- Files View -->
         <div id="filesView" class="hidden">
-            <!-- Toolbar -->
-            <div class="flex justify-between items-center mb-6">
-                <h2 id="currentCategoryTitle" class="text-2xl font-bold text-white"></h2>
-                <button id="downloadZipBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-lg flex items-center gap-2 transition-all">
+            <!-- Toolbar for Bulk Actions -->
+            <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 flex flex-wrap gap-4 items-center justify-between mb-6 shadow-sm">
+                <div class="flex items-center gap-4">
+                    <label class="flex items-center gap-2 text-sm font-medium text-white cursor-pointer select-none">
+                        <input type="checkbox" id="selectAllCheckbox" class="checkbox-custom" onchange="toggleSelectAll(this)">
+                        Select All (<span id="selectedCount">0</span>)
+                    </label>
+                    <div class="h-6 w-px bg-slate-700"></div>
+                    <button onclick="bulkMove()" id="btnBulkMove" disabled class="disabled:opacity-50 disabled:cursor-not-allowed bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded transition-colors shadow-sm">Move Selected</button>
+                    <button onclick="bulkDelete()" id="btnBulkDelete" disabled class="disabled:opacity-50 disabled:cursor-not-allowed bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white border border-rose-600/30 text-sm px-4 py-2 rounded transition-colors shadow-sm">Delete Selected</button>
+                </div>
+                <button onclick="downloadZip()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-2 px-4 rounded shadow-sm flex items-center gap-2 transition-colors">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                    Download ZIP (96h Link)
+                    Download ZIP (96h)
                 </button>
             </div>
+            
             <!-- Files Grid -->
-            <div id="filesGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                <!-- Files render here -->
-            </div>
+            <div id="filesGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
         </div>
     </main>
 
-    <!-- Video Preview Modal -->
-    <div id="previewModal" class="fixed inset-0 bg-slate-900/90 modal-overlay hidden items-center justify-center z-50 p-4">
-        <div class="bg-slate-800 rounded-xl shadow-2xl w-full max-w-4xl border border-slate-700 overflow-hidden flex flex-col">
-            <div class="px-6 py-4 border-b border-slate-700 flex justify-between items-center bg-slate-900">
-                <h3 id="previewTitle" class="text-lg font-semibold text-white truncate pr-4"></h3>
-                <button onclick="closePreview()" class="text-slate-400 hover:text-white transition-colors bg-slate-800 p-1 rounded-md">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                </button>
-            </div>
-            <div class="aspect-video bg-black relative w-full flex items-center justify-center">
-                <video id="previewVideo" class="w-full h-full" controls controlsList="nodownload" preload="metadata"></video>
-            </div>
-            <div class="p-4 bg-slate-900 flex justify-end gap-3 border-t border-slate-700">
-                <button id="btnPreviewMove" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded transition-colors shadow">Move / Rename</button>
-                <button id="btnPreviewDelete" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-sm font-medium rounded transition-colors shadow">Delete</button>
-                <a id="btnPreviewDownload" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium rounded transition-colors shadow">Download file</a>
-            </div>
-        </div>
-    </div>
-
-    <!-- Move/Rename Modal -->
-    <div id="moveModal" class="fixed inset-0 bg-slate-900/90 modal-overlay hidden items-center justify-center z-[60]">
+    <!-- Bulk/Single Move Modal -->
+    <div id="moveModal" class="fixed inset-0 bg-slate-900/90 modal-overlay hidden items-center justify-center z-50">
         <div class="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-md border border-slate-700">
-            <h3 class="text-xl font-bold mb-6 text-white">Move / Rename</h3>
+            <h3 id="moveModalTitle" class="text-xl font-bold mb-6 text-white">Move / Rename</h3>
             <div class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-slate-400 mb-1.5">Destination Category (Folder)</label>
-                    <input id="modalCategory" type="text" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none transition-all">
+                    <input id="modalCategory" type="text" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:border-sky-500 outline-none">
                 </div>
-                <div>
+                <div id="renameContainer">
                     <label class="block text-sm font-medium text-slate-400 mb-1.5">New Filename</label>
-                    <input id="modalFilename" type="text" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none transition-all">
+                    <input id="modalFilename" type="text" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:border-sky-500 outline-none">
                 </div>
             </div>
             <div class="flex justify-end gap-3 mt-8">
-                <button onclick="closeMoveModal()" class="px-5 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm font-medium transition-colors">Cancel</button>
-                <button onclick="submitMove()" class="px-5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium shadow-lg transition-colors">Save Changes</button>
+                <button onclick="closeMoveModal()" class="px-5 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm transition-colors">Cancel</button>
+                <button onclick="submitMove()" class="px-5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium shadow-lg transition-colors">Apply</button>
             </div>
         </div>
     </div>
@@ -104,20 +88,32 @@
     <script>
         let currentDataset = [];
         let currentCategory = null;
-        let moveState = null;
+        let selectedFiles = new Set();
+        let actionState = null; // Stores info for move operations
 
-        // Utility: Format ID to Name (e.g. "person_walking" -> "Person Walking")
+        // Intersection Observer for Lazy Loading Videos
+        const videoObserver = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const video = entry.target;
+                    if (video.dataset.src) {
+                        video.src = video.dataset.src;
+                        video.removeAttribute('data-src');
+                    }
+                    observer.unobserve(video);
+                }
+            });
+        }, { rootMargin: "200px" });
+
         function formatLabelName(id) {
             if (!id) return "Unknown";
-            return id.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+            return id.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         }
 
-        function formatBytes(bytes, decimals = 2) {
-            if (!+bytes) return '0 Bytes';
-            const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`;
+        function formatBytes(bytes) {
+            if (!+bytes) return '0 B';
+            const k = 1024, i = Math.floor(Math.log(bytes) / Math.log(k));
+            return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${['B', 'KB', 'MB', 'GB'][i]}`;
         }
 
         async function fetchDataset() {
@@ -134,8 +130,8 @@
                     renderFolders();
                 }
             } catch (err) {
-                console.error("Failed to fetch dataset", err);
-                document.getElementById('foldersView').innerHTML = `<div class="col-span-full text-center py-10 text-rose-400">Failed to load dataset. Is the backend running?</div>`;
+                console.error(err);
+                document.getElementById('foldersView').innerHTML = `<div class="col-span-full text-center py-10 text-rose-400">Error loading dataset.</div>`;
             }
         }
 
@@ -143,13 +139,14 @@
             let totalVids = 0, totalSize = 0;
             currentDataset.forEach(cat => {
                 totalVids += cat.videos.length;
-                totalSize += cat.videos.reduce((acc, v) => acc + v.size, 0);
+                totalSize += cat.videos.reduce((a, v) => a + v.size, 0);
             });
             document.getElementById('stats').innerText = `${currentDataset.length} Labels | ${totalVids} Videos | ${formatBytes(totalSize)}`;
         }
 
         function goHome() {
             currentCategory = null;
+            selectedFiles.clear();
             document.getElementById('foldersView').classList.remove('hidden');
             document.getElementById('filesView').classList.add('hidden');
             document.getElementById('breadcrumbDivider').classList.add('hidden');
@@ -160,27 +157,21 @@
         function renderFolders() {
             const container = document.getElementById('foldersView');
             if (currentDataset.length === 0) {
-                container.innerHTML = `<div class="col-span-full text-center py-20 text-slate-500 text-lg border-2 border-dashed border-slate-800 rounded-xl">No categories found. Start tagging!</div>`;
+                container.innerHTML = `<div class="col-span-full text-center py-20 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">No categories found. Start tagging!</div>`;
                 return;
             }
-
             container.innerHTML = currentDataset.map(cat => {
-                const totalSize = cat.videos.reduce((acc, v) => acc + v.size, 0);
                 const niceName = formatLabelName(cat.name);
-                
                 return `
-                    <div onclick="openCategory('${cat.name}')" class="folder-card bg-slate-800 rounded-xl p-5 border border-slate-700 cursor-pointer transition-all flex flex-col group">
+                    <div onclick="openCategory('${cat.name}')" class="folder-card bg-slate-800 rounded-xl p-5 border border-slate-700 cursor-pointer flex flex-col group shadow-sm">
                         <div class="flex items-start justify-between mb-4">
-                            <div class="p-3 bg-sky-500/10 rounded-lg group-hover:bg-sky-500/20 transition-colors">
-                                <svg class="w-8 h-8 text-sky-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path></svg>
+                            <div class="p-3 bg-indigo-500/10 rounded-lg group-hover:bg-indigo-500/20 transition-colors">
+                                <svg class="w-8 h-8 text-indigo-400" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path></svg>
                             </div>
-                            <span class="text-xs font-semibold px-2.5 py-1 bg-slate-700 text-slate-300 rounded-full">${cat.videos.length}</span>
+                            <span class="text-xs font-semibold px-2.5 py-1 bg-slate-900 text-slate-300 rounded-full border border-slate-700">${cat.videos.length}</span>
                         </div>
-                        <h3 class="text-lg font-bold text-white mb-1 truncate" title="${niceName}">${niceName}</h3>
-                        <p class="text-xs text-slate-500 mt-auto flex justify-between">
-                            <span>ID: ${cat.name}</span>
-                            <span>${formatBytes(totalSize)}</span>
-                        </p>
+                        <h3 class="text-lg font-bold text-white mb-1 truncate">${niceName}</h3>
+                        <p class="text-[11px] text-slate-500 mt-auto">ID: ${cat.name}</p>
                     </div>
                 `;
             }).join('');
@@ -189,122 +180,183 @@
         function openCategory(catId) {
             currentCategory = currentDataset.find(c => c.name === catId);
             if (!currentCategory) return;
+            selectedFiles.clear();
+            updateBulkButtons();
 
             document.getElementById('foldersView').classList.add('hidden');
             document.getElementById('filesView').classList.remove('hidden');
-            
             document.getElementById('breadcrumbDivider').classList.remove('hidden');
             document.getElementById('breadcrumbCurrent').classList.remove('hidden');
             document.getElementById('breadcrumbCurrent').innerText = formatLabelName(catId);
-            
-            document.getElementById('currentCategoryTitle').innerText = formatLabelName(catId);
-            
-            const btnZip = document.getElementById('downloadZipBtn');
-            btnZip.onclick = () => window.location.href = `/api/v1/dataset/download_folder/${catId}`;
+            document.getElementById('selectAllCheckbox').checked = false;
 
             renderFiles();
         }
 
         function renderFiles() {
             const container = document.getElementById('filesGrid');
+            container.innerHTML = '';
+            
             if (currentCategory.videos.length === 0) {
-                container.innerHTML = `<div class="col-span-full text-center py-20 text-slate-500 text-lg border-2 border-dashed border-slate-800 rounded-xl">Folder is empty.</div>`;
+                container.innerHTML = `<div class="col-span-full text-center py-20 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">Empty Label.</div>`;
                 return;
             }
 
-            container.innerHTML = currentCategory.videos.map(v => {
+            currentCategory.videos.forEach(v => {
                 const vidUrl = `/media/${currentCategory.name}/${v.filename}`;
-                return `
-                    <div class="video-card bg-slate-800 rounded-lg border border-slate-700 overflow-hidden transition-all group flex flex-col">
-                        <div class="aspect-video bg-slate-900 relative cursor-pointer" onclick="openPreview('${currentCategory.name}', '${v.filename}')">
-                            <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-slate-900/40 transition-opacity">
-                                <div class="w-12 h-12 bg-sky-500/80 rounded-full flex items-center justify-center text-white backdrop-blur shadow-lg">
-                                    <svg class="w-6 h-6 ml-1" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4l12 6-12 6z"></path></svg>
-                                </div>
-                            </div>
-                            <svg class="w-12 h-12 text-slate-700 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" fill="currentColor" viewBox="0 0 20 20"><path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm3 2h6v4H7V5zm8 8v2h1v-2h-1zm-2-2H7v4h6v-4zm2 0h1V9h-1v2zm1-4V5h-1v2h1zM5 5h1v2H5V5zm0 4h1v2H5V9zm0 4h1v2H5v-2z"></path></svg>
-                        </div>
-                        <div class="p-3 border-t border-slate-700 flex-1 flex flex-col justify-between">
-                            <div class="text-sm text-slate-200 font-medium truncate mb-2" title="${v.filename}">${v.filename}</div>
-                            <div class="text-[11px] text-slate-500 flex justify-between items-center">
+                const isChecked = selectedFiles.has(v.filename) ? 'checked' : '';
+                
+                const card = document.createElement('div');
+                card.className = "video-card bg-slate-800 rounded-lg border border-slate-700 overflow-hidden flex flex-col relative shadow-sm";
+                card.innerHTML = `
+                    <!-- Selection Checkbox overlay -->
+                    <div class="absolute top-2 left-2 z-10">
+                        <input type="checkbox" class="checkbox-custom file-checkbox shadow" value="${v.filename}" ${isChecked} onchange="toggleFile('${v.filename}', this.checked)">
+                    </div>
+                    <!-- Video Preview (Lazy Loaded) -->
+                    <div class="aspect-video bg-black relative border-b border-slate-700">
+                        <video data-src="${vidUrl}" class="w-full h-full object-contain" preload="metadata" controls controlsList="nodownload"></video>
+                    </div>
+                    <!-- File Info & Actions -->
+                    <div class="p-3 flex-1 flex flex-col justify-between gap-3">
+                        <div>
+                            <div class="text-sm text-slate-200 font-medium truncate mb-1" title="${v.filename}">${v.filename}</div>
+                            <div class="text-[11px] text-slate-500 flex justify-between">
                                 <span>${formatBytes(v.size)}</span>
                                 <span>${new Date(v.created_at * 1000).toLocaleDateString()}</span>
                             </div>
                         </div>
+                        <div class="grid grid-cols-3 gap-1 pt-2 border-t border-slate-700/50">
+                            <button onclick="openSingleMove('${v.filename}')" class="text-[11px] font-medium py-1.5 rounded bg-slate-700/50 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors">Move</button>
+                            <a href="${vidUrl}" download="${v.filename}" class="text-[11px] font-medium py-1.5 rounded bg-sky-900/30 hover:bg-sky-600 text-sky-400 hover:text-white text-center transition-colors">Download</a>
+                            <button onclick="singleDelete('${v.filename}')" class="text-[11px] font-medium py-1.5 rounded bg-rose-900/20 hover:bg-rose-600 text-rose-400 hover:text-white transition-colors">Delete</button>
+                        </div>
                     </div>
                 `;
-            }).join('');
+                container.appendChild(card);
+                
+                // Observe the video element for lazy loading
+                const videoEl = card.querySelector('video');
+                videoObserver.observe(videoEl);
+            });
         }
 
-        function openPreview(cat, filename) {
-            const vidUrl = `/media/${cat}/${filename}`;
-            document.getElementById('previewTitle').innerText = filename;
-            const videoEl = document.getElementById('previewVideo');
-            videoEl.src = vidUrl;
-            
-            document.getElementById('btnPreviewDownload').href = vidUrl;
-            document.getElementById('btnPreviewDownload').download = filename;
-            
-            document.getElementById('btnPreviewMove').onclick = () => { closePreview(); openMoveModal(cat, filename); };
-            document.getElementById('btnPreviewDelete').onclick = () => { closePreview(); deleteVideo(cat, filename); };
-            
-            document.getElementById('previewModal').style.display = 'flex';
-            videoEl.play().catch(e => console.warn("Autoplay prevented:", e));
+        function toggleSelectAll(checkbox) {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            if (checkbox.checked) {
+                currentCategory.videos.forEach(v => selectedFiles.add(v.filename));
+                checkboxes.forEach(cb => cb.checked = true);
+            } else {
+                selectedFiles.clear();
+                checkboxes.forEach(cb => cb.checked = false);
+            }
+            updateBulkButtons();
         }
 
-        function closePreview() {
-            const videoEl = document.getElementById('previewVideo');
-            videoEl.pause();
-            videoEl.src = "";
-            document.getElementById('previewModal').style.display = 'none';
+        function toggleFile(filename, isChecked) {
+            if (isChecked) selectedFiles.add(filename);
+            else selectedFiles.delete(filename);
+            
+            const allChecked = selectedFiles.size === currentCategory.videos.length && currentCategory.videos.length > 0;
+            document.getElementById('selectAllCheckbox').checked = allChecked;
+            updateBulkButtons();
         }
 
-        function openMoveModal(cat, filename) {
-            moveState = { old_category: cat, old_filename: filename };
-            document.getElementById('modalCategory').value = cat;
+        function updateBulkButtons() {
+            const count = selectedFiles.size;
+            document.getElementById('selectedCount').innerText = count;
+            document.getElementById('btnBulkMove').disabled = count === 0;
+            document.getElementById('btnBulkDelete').disabled = count === 0;
+        }
+
+        function downloadZip() {
+            window.location.href = `/api/v1/dataset/download_folder/${currentCategory.name}`;
+        }
+
+        // Action: Single Delete
+        async function singleDelete(filename) {
+            if (!confirm(`Delete ${filename}?`)) return;
+            try {
+                await fetch(`/api/v1/dataset/${currentCategory.name}/${filename}`, { method: 'DELETE' });
+                fetchDataset();
+            } catch (e) { alert("Delete failed"); }
+        }
+
+        // Action: Bulk Delete
+        async function bulkDelete() {
+            if (!confirm(`Are you sure you want to delete ${selectedFiles.size} videos?`)) return;
+            try {
+                const promises = Array.from(selectedFiles).map(filename => 
+                    fetch(`/api/v1/dataset/${currentCategory.name}/${filename}`, { method: 'DELETE' })
+                );
+                await Promise.all(promises);
+                selectedFiles.clear();
+                fetchDataset();
+            } catch (e) { alert("Bulk delete encountered errors."); fetchDataset(); }
+        }
+
+        // Action: Open Move Modal (Single)
+        function openSingleMove(filename) {
+            actionState = { type: 'single', old_filename: filename };
+            document.getElementById('moveModalTitle').innerText = 'Move / Rename Video';
+            document.getElementById('modalCategory').value = currentCategory.name;
             document.getElementById('modalFilename').value = filename;
+            document.getElementById('renameContainer').style.display = 'block';
+            document.getElementById('moveModal').style.display = 'flex';
+        }
+
+        // Action: Open Move Modal (Bulk)
+        function bulkMove() {
+            actionState = { type: 'bulk' };
+            document.getElementById('moveModalTitle').innerText = `Move ${selectedFiles.size} Videos`;
+            document.getElementById('modalCategory').value = currentCategory.name;
+            // Hide filename input for bulk moves
+            document.getElementById('renameContainer').style.display = 'none';
             document.getElementById('moveModal').style.display = 'flex';
         }
 
         function closeMoveModal() {
-            moveState = null;
+            actionState = null;
             document.getElementById('moveModal').style.display = 'none';
         }
 
+        // Action: Execute Move (Single or Bulk)
         async function submitMove() {
-            if (!moveState) return;
+            if (!actionState) return;
             const new_category = document.getElementById('modalCategory').value.trim();
-            const new_filename = document.getElementById('modalFilename').value.trim();
-            if (!new_category || !new_filename) return alert("Fields cannot be empty");
+            if (!new_category) return alert("Destination category is required.");
 
             try {
-                const res = await fetch('/api/v1/dataset/move', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ old_category: moveState.old_category, old_filename: moveState.old_filename, new_category, new_filename })
-                });
-                if (!res.ok) {
-                    const data = await res.json();
-                    throw new Error(data.detail || "Move failed");
+                if (actionState.type === 'single') {
+                    const new_filename = document.getElementById('modalFilename').value.trim();
+                    if (!new_filename) return alert("Filename required");
+                    
+                    const res = await fetch('/api/v1/dataset/move', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ old_category: currentCategory.name, old_filename: actionState.old_filename, new_category, new_filename })
+                    });
+                    if (!res.ok) throw new Error((await res.json()).detail);
+                } 
+                else if (actionState.type === 'bulk') {
+                    const promises = Array.from(selectedFiles).map(filename => 
+                        fetch('/api/v1/dataset/move', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ old_category: currentCategory.name, old_filename: filename, new_category, new_filename: filename })
+                        }).then(r => { if (!r.ok) throw new Error(); })
+                    );
+                    await Promise.all(promises);
+                    selectedFiles.clear();
                 }
                 closeMoveModal();
                 fetchDataset();
             } catch (err) {
-                alert(err.message);
-            }
-        }
-
-        async function deleteVideo(cat, filename) {
-            if (!confirm(`Are you sure you want to delete ${filename}?`)) return;
-            try {
-                await fetch(`/api/v1/dataset/${cat}/${filename}`, { method: 'DELETE' });
+                alert("Operation failed or partially failed: " + err.message);
                 fetchDataset();
-            } catch (e) {
-                alert("Failed to delete video.");
             }
         }
 
-        // Setup
         fetchDataset();
     </script>
 </body>
