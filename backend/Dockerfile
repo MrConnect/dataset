@@ -10,8 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PYTHONPATH=/app
 
 WORKDIR /app
 
@@ -19,8 +18,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    playwright install --with-deps chromium && \
-    chmod -R a+rX /ms-playwright
+    playwright install --with-deps chromium
 
 # Copy backend application
 COPY . .
