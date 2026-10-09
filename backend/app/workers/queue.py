@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import shutil
 from pathlib import Path
 from sqlalchemy import select, update
 from app.config import settings
@@ -62,7 +63,7 @@ class JobWorkerQueue:
     @classmethod
     async def _process_job(cls, job_id: str) -> None:
         source_path: Path | None = None
-        source_is_uploaded = False
+        source_should_persist = False
         errors: list[str] = []
 
         async with AsyncSessionLocal() as session:
@@ -92,7 +93,7 @@ class JobWorkerQueue:
                 
                 if job.source_file_path:
                     source_path = Path(job.source_file_path)
-                    source_is_uploaded = True
+                    source_should_persist = True
                     if not source_path.exists():
                         raise FileNotFoundError("Uploaded source file is missing. Upload it again to resume the job.")
                     probed_duration = await VideoDownloader._probe_media(source_path)
@@ -134,8 +135,25 @@ class JobWorkerQueue:
                         raise failure from source_error
                     headers_to_use = req_headers
 
-                if probed_duration and not job.duration_seconds:
-                    job.duration_seconds = probed_duration
+                if settings.KEEP_DOWNLOADED_SOURCES and source_path and not source_should_persist:
+                    downloads_dir = Path(settings.BASE_STORAGE_DIR) / "downloads"
+                    downloads_dir.mkdir(parents=True, exist_ok=True)
+                    archived_source = downloads_dir / f"{job.id}_source{source_path.suffix or '.mp4'}"
+                    archived_source.unlink(missing_ok=True)
+                    await asyncio.to_thread(shutil.move, str(source_path), str(archived_source))
+                    source_path = archived_source
+                    source_should_persist = True
+                    job.source_file_path = str(source_path)
+                    await session.commit()
+
+                expected_duration = job.duration_seconds
+                job.duration_seconds = probed_duration
+                if expected_duration and probed_duration + max(5.0, expected_duration * 0.02) < expected_duration:
+                    raise ValueError(
+                        f"Downloaded source is incomplete or mismatched: playable video is {probed_duration:.2f}s "
+                        f"but the browser reported {expected_duration:.2f}s. Inspect {source_path.name} in Source Downloads."
+                    )
+
                 job.failure_code = None
                 job.error = None
 
@@ -245,16 +263,16 @@ class JobWorkerQueue:
 
             except Exception as e:
                 logger.error(f"Job {job_id} processing failed: {e}", exc_info=True)
-                job.status = "failed"
                 failure = classify_download_error(e)
+                job.status = "awaiting_source" if failure.source_required else "failed"
                 job.failure_code = failure.code
                 job.error = str(failure)
-                job.progress = 100
+                job.progress = 0 if failure.source_required else 100
                 await session.commit()
 
             finally:
                 # Cleanup downloaded source temp file if local Path
-                if source_path and not source_is_uploaded and isinstance(source_path, Path) and source_path.exists():
+                if source_path and not source_should_persist and isinstance(source_path, Path) and source_path.exists():
                     try:
                         source_path.unlink(missing_ok=True)
                     except Exception:

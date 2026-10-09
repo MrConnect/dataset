@@ -88,3 +88,24 @@ async def test_ffmpeg_segment_extraction_and_dataset_organization(tmp_path: Path
         assert meta_data["job_id"] == job_id
         assert meta_data["segments_count"] == 1
         assert meta_data["segments"][0]["actual_duration"] == actual_duration
+
+
+@pytest.mark.asyncio
+async def test_tiny_header_only_segment_is_rejected(tmp_path: Path):
+    broken = tmp_path / "header_only.mp4"
+    broken.write_bytes(b"x" * 261)
+
+    with pytest.raises(FileNotFoundError, match="too small"):
+        await VideoProcessor._verify_segment_file(broken, expected_duration=5.0)
+
+
+@pytest.mark.asyncio
+async def test_segment_outside_downloaded_video_is_rejected(tmp_path: Path):
+    with pytest.raises(ValueError, match="beyond downloaded video duration"):
+        await VideoProcessor.extract_segment(
+            source_path=tmp_path / "unused.mp4",
+            output_path=tmp_path / "cut.mp4",
+            start_seconds=20.0,
+            end_seconds=25.0,
+            total_duration=10.0,
+        )

@@ -68,6 +68,7 @@ A built-in GUI at `/dashboard/index.html` for monitoring jobs, checking service 
 *   `Ctrl+X` then `Ctrl+V` moves files into the selected category.
 *   Bulk delete and move use single API operations; thumbnails do not preload full media files.
 *   The live SQLite database is protected from dashboard delete and move operations.
+*   Server-downloaded source videos are retained in `Source Downloads` using the job ID so the input can be inspected alongside its cuts.
 
 ## Setup & Installation
 

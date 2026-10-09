@@ -9,6 +9,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.job import Job
 from app.services.downloader import VideoDownloader
 from app.services.source_resolver import BackendSourceResolver
+from app.services.download_errors import classify_download_error
 from app.workers.queue import JobWorkerQueue
 
 
@@ -137,3 +138,12 @@ async def test_mp4_probe_does_not_block_event_loop(monkeypatch):
     # This coroutine only gets CPU time if ffprobe is outside the event loop.
     assert asyncio.get_running_loop().is_running()
     await probe
+
+
+def test_incomplete_source_requests_verified_upload():
+    failure = classify_download_error(
+        ValueError("Downloaded source is incomplete or mismatched: playable video is 1700s but browser reported 2600s")
+    )
+
+    assert failure.code == "SOURCE_INCOMPLETE"
+    assert failure.source_required is True

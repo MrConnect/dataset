@@ -362,13 +362,14 @@ class VideoDownloader:
         """
         Validates media integrity using FFprobe and returns duration in seconds.
         """
-        if not file_path.exists() or file_path.stat().st_size == 0:
+        if not file_path.exists() or file_path.stat().st_size < 4096:
             raise FileNotFoundError(f"Downloaded media file '{file_path}' does not exist or is empty.")
 
         cmd = [
             "ffprobe",
             "-v", "error",
-            "-show_entries", "format=duration",
+            "-select_streams", "v:0",
+            "-show_entries", "format=duration,size:stream=codec_type,duration,start_time,width,height",
             "-of", "json",
             str(file_path),
         ]
@@ -381,7 +382,20 @@ class VideoDownloader:
 
         try:
             data = json.loads(stdout)
-            dur_str = data.get("format", {}).get("duration")
-            return float(dur_str) if dur_str else 0.0
+            streams = data.get("streams", [])
+            if not streams:
+                raise ValueError("Downloaded source has no playable video stream")
+            video_stream = streams[0]
+            if not video_stream.get("width") or not video_stream.get("height"):
+                raise ValueError("Downloaded source video stream has invalid dimensions")
+            stream_duration = video_stream.get("duration")
+            format_duration = data.get("format", {}).get("duration")
+            try:
+                duration = float(stream_duration)
+            except (TypeError, ValueError):
+                duration = float(format_duration or 0)
+            if duration <= 0:
+                raise ValueError("Downloaded source has no measurable video duration")
+            return duration
         except Exception as e:
             raise ValueError(f"Could not parse media duration from FFprobe: {e}")

@@ -28,4 +28,10 @@ def classify_download_error(error: Exception) -> DownloadFailure:
             "The captured URL did not return playable media. Select another source or upload the video.",
             source_required=True,
         )
+    if "incomplete or mismatched" in lowered or "no playable video stream" in lowered:
+        return DownloadFailure(
+            "SOURCE_INCOMPLETE",
+            f"{message} Upload a verified source video to continue.",
+            source_required=True,
+        )
     return DownloadFailure("SOURCE_DOWNLOAD_FAILED", message)

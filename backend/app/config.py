@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     MAX_DURATION_SECONDS: int = 4 * 3600  # 4 Hours
     MAX_SEGMENTS_PER_JOB: int = 500
     DOWNLOAD_TIMEOUT_SECONDS: int = 600
+    KEEP_DOWNLOADED_SOURCES: bool = True
 
     ALLOW_LOCAL_NETWORK: bool = False  # Anti-SSRF toggle (False by default for security)
     ACCURATE_CUTTING: bool = True  # Frame-accurate re-encoding
