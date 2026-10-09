@@ -475,6 +475,7 @@
                 }
 
                 document.getElementById('previewTitle').innerText = v.filename;
+                document.title = v.filename; // Update document title so extension captures it
                 const vidEl = document.getElementById('previewVideo');
                 vidEl.src = fileUrl;
                 document.getElementById('previewModal').style.display = 'flex';
@@ -533,6 +534,7 @@
             vidEl.pause();
             vidEl.src = "";
             document.getElementById('previewModal').style.display = 'none';
+            document.title = 'Dataset Dashboard'; // Restore title
         }
 
         async function submitMove() {
