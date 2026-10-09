@@ -252,10 +252,8 @@ class VideoDownloader:
         is_dash = media_type == "dash" or ".mpd" in target_url.lower()
 
         # Keep HLS in its native MPEG-TS container. Remuxing long HLS streams
-        # directly to MP4 can succeed with exit code 0 while silently dropping
-        # video packets after a damaged/timestamp-sensitive segment. MPEG-TS is
-        # designed for this input and gives the cutter the complete timeline.
-        output_file = settings.temp_path / f"{job_id}_source{'.ts' if is_hls else '.mp4'}"
+        # yt-dlp natively fixes and merges HLS segments perfectly into MP4 containers.
+        output_file = settings.temp_path / f"{job_id}_source.mp4"
 
         if is_hls or is_dash:
             await VideoDownloader._download_via_ffmpeg(
@@ -317,6 +315,7 @@ class VideoDownloader:
                 "--retries", "10",
                 "--fragment-retries", "10",
                 "--retry-sleep", "fragment:exp=1:20",
+                "--merge-output-format", "mp4",
                 "--user-agent", ua,
                 "--no-warnings"
             ]

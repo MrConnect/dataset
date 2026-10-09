@@ -275,6 +275,7 @@ class JobWorkerQueue:
                 # Cleanup downloaded source temp file if local Path
                 if source_path and not source_should_persist and isinstance(source_path, Path) and source_path.exists():
                     try:
-                        source_path.unlink(missing_ok=True)
+                        # source_path.unlink(missing_ok=True)
+                        print(f"Skipping deletion of {source_path} for debugging purposes.")
                     except Exception:
                         pass
