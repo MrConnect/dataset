@@ -2,7 +2,7 @@ import os
 import shutil
 import time
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import zipfile
@@ -15,6 +15,17 @@ from app.models.job import CategoryModel
 from app.config import settings
 
 router = APIRouter()
+
+@router.post("/upload_video")
+async def upload_video(file: UploadFile = File(...)):
+    downloads_dir = Path(settings.BASE_STORAGE_DIR) / "downloads"
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+    
+    file_path = downloads_dir / file.filename
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    return {"ok": True, "filename": file.filename}
 
 class MoveVideoRequest(BaseModel):
     old_category: str
