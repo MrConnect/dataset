@@ -78,10 +78,9 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
               payload: { segments }
             }, (response) => {
               if (chrome.runtime.lastError || !response?.ok) {
-                alert("Failed to submit imported job. Make sure a video is currently open and detected in the active tab.");
+                alert("Failed to load imported segments. Make sure a video is currently open and detected in the active tab.");
               } else {
-                alert("Job imported and submitted successfully!");
-                fetchJobs();
+                alert("Segments imported successfully! They now appear on the video timeline. You can adjust them and submit when ready.");
               }
             });
           }
