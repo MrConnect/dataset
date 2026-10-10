@@ -49,6 +49,7 @@ export class PlayerBar {
     this.playerParent.appendChild(this.container);
 
     document.addEventListener('click', (e) => {
+      // Handle popover outside clicks
       const target = e.target as HTMLElement;
       if (!target.closest('.vdt-popover-container')) {
         if (this.openPopover !== null) {
@@ -56,7 +57,42 @@ export class PlayerBar {
           this.render();
         }
       }
-    });
+
+      // Bypass click-stealing ad overlays using capture phase
+      const barRect = this.container.getBoundingClientRect();
+      if (
+        e.clientX >= barRect.left &&
+        e.clientX <= barRect.right &&
+        e.clientY >= barRect.top &&
+        e.clientY <= barRect.bottom
+      ) {
+        // Click is physically inside our bar.
+        // Let's manually route the click to the actual button underneath
+        // We temporarily disable pointer-events on the overlay? No, we just let it bubble
+        // Actually, if we are in capture phase, the event target might be the ad overlay!
+        if (!this.container.contains(e.target as Node)) {
+          // The event target is NOT inside our container (so it's an overlay).
+          // We must find what's REALLY underneath.
+          
+          // 1. Hide the ad overlay temporarily
+          const originalDisplay = (e.target as HTMLElement).style.display;
+          (e.target as HTMLElement).style.display = 'none';
+          
+          // 2. Find the element at these coordinates
+          const realTarget = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement;
+          
+          // 3. Restore the ad overlay
+          (e.target as HTMLElement).style.display = originalDisplay;
+
+          // 4. If the real target is inside our container, simulate click and stop this one
+          if (realTarget && this.container.contains(realTarget)) {
+            e.stopPropagation();
+            e.preventDefault();
+            realTarget.click();
+          }
+        }
+      }
+    }, true); // useCapture = true
   }
 
   public setCallbacks(callbacks: {

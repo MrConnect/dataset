@@ -11,30 +11,58 @@ export interface PlayerInfo {
 }
 
 export class PlayerAdapter {
-  private element: HTMLVideoElement;
+  private initialElement: HTMLVideoElement;
   private index: number;
   private onTimeUpdateCallback?: (time: number, duration: number) => void;
   private onPlayStateChangeCallback?: (paused: boolean) => void;
+  
+  private lastTime: number = 0;
 
   constructor(element: HTMLVideoElement, index: number) {
-    this.element = element;
+    this.initialElement = element;
     this.index = index;
-    this.setupListeners();
+    this.startPolling();
   }
 
-  private setupListeners(): void {
-    this.element.addEventListener('timeupdate', () => {
-      if (this.onTimeUpdateCallback) {
-        this.onTimeUpdateCallback(this.element.currentTime, this.element.duration || 0);
-      }
-    });
-    this.element.addEventListener('play', () => {
-      if (this.onPlayStateChangeCallback) this.onPlayStateChangeCallback(false);
-    });
-    this.element.addEventListener('pause', () => {
-      if (this.onPlayStateChangeCallback) this.onPlayStateChangeCallback(true);
-    });
+  private get element(): HTMLVideoElement {
+    // Dynamically find the actual video element in case the site replaces it
+    const videos = Array.from(document.querySelectorAll('video'));
+    if (videos.length === 0) return this.initialElement;
+    
+    // Prefer the playing video, or the one with a valid src, or fallback to the first/initial
+    const playing = videos.find(v => !v.paused && v.readyState > 0);
+    if (playing) return playing;
+    
+    const valid = videos.find(v => v.src || v.currentSrc);
+    return valid || videos[0] || this.initialElement;
   }
+
+  private startPolling(): void {
+    // Instead of relying on native events which break if the video element is replaced,
+    // poll the active video element state.
+    window.setInterval(() => {
+      const el = this.element;
+      
+      // Check time update
+      if (this.onTimeUpdateCallback) {
+        if (el.currentTime !== this.lastTime) {
+          this.lastTime = el.currentTime;
+          this.onTimeUpdateCallback(el.currentTime, el.duration || 0);
+        }
+      }
+      
+      // We don't easily poll play state changes without keeping track, so let's track it
+      if (this.onPlayStateChangeCallback) {
+        const isPaused = el.paused;
+        if (this.lastPaused !== isPaused) {
+          this.lastPaused = isPaused;
+          this.onPlayStateChangeCallback(isPaused);
+        }
+      }
+    }, 250);
+  }
+  
+  private lastPaused: boolean = true;
 
   public onTimeUpdate(cb: (time: number, duration: number) => void): void {
     this.onTimeUpdateCallback = cb;
