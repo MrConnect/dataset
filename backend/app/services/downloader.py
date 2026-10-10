@@ -312,6 +312,7 @@ class VideoDownloader:
         if is_hls:
             cmd = [
                 "yt-dlp",
+                "--newline",
                 "--hls-prefer-native",
                 "--concurrent-fragments", "4",
                 "--retries", "10",
@@ -361,37 +362,53 @@ class VideoDownloader:
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT
+            stderr=asyncio.subprocess.STDOUT,
+            limit=10485760 # 10MB limit!
         )
         
         # Basic progress monitoring parsing ffmpeg/yt-dlp output
         error_log = deque(maxlen=20)
         last_pct = -1
         try:
+            buffer = b""
             while True:
-                line = await process.stdout.readline()
-                if not line:
+                chunk = await process.stdout.read(4096)
+                if not chunk:
                     break
-                line_str = line.decode(errors='replace').strip()
-                if line_str:
-                    error_log.append(line_str)
-                    if progress_callback and duration_seconds and not is_hls:
-                        m = re.search(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})", line_str)
-                        if m:
-                            h, m_m, s = float(m.group(1)), float(m.group(2)), float(m.group(3))
-                            curr = h * 3600 + m_m * 60 + s
-                            pct = min(100, int((curr / duration_seconds) * 100))
-                            if pct > last_pct:
-                                await progress_callback(pct)
-                                last_pct = pct
-                    elif progress_callback and is_hls:
-                        # yt-dlp progress: [download]  50.0% of ~2.50GiB
-                        m = re.search(r"\[download\]\s+(\d+\.?\d*)%(?:.*?frag|.*?MiB|.*?GiB)", line_str)
-                        if m:
-                            pct = min(100, int(float(m.group(1))))
-                            if pct > last_pct or (last_pct - pct) > 50:
-                                await progress_callback(pct)
-                                last_pct = pct
+                buffer += chunk
+                
+                # Try to process lines separated by \r or \n
+                while True:
+                    match = re.search(b'([\r\n])', buffer)
+                    if not match:
+                        # Prevent unbounded memory usage if no separator
+                        if len(buffer) > 10485760:
+                            buffer = buffer[-4096:]
+                        break
+                    
+                    idx = match.start()
+                    line_str = buffer[:idx].decode(errors='replace').strip()
+                    buffer = buffer[idx+1:]
+                    
+                    if line_str:
+                        error_log.append(line_str)
+                        if progress_callback and duration_seconds and not is_hls:
+                            m = re.search(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})", line_str)
+                            if m:
+                                h, m_m, s = float(m.group(1)), float(m.group(2)), float(m.group(3))
+                                curr = h * 3600 + m_m * 60 + s
+                                pct = min(100, int((curr / duration_seconds) * 100))
+                                if pct > last_pct:
+                                    await progress_callback(pct)
+                                    last_pct = pct
+                        elif progress_callback and is_hls:
+                            # yt-dlp progress: [download]  50.0% of ~2.50GiB
+                            m = re.search(r"\[download\]\s+(\d+\.?\d*)%(?:.*?frag|.*?MiB|.*?GiB)", line_str)
+                            if m:
+                                pct = min(100, int(float(m.group(1))))
+                                if pct > last_pct or (last_pct - pct) > 50:
+                                    await progress_callback(pct)
+                                    last_pct = pct
 
             await asyncio.wait_for(process.wait(), timeout=settings.MAX_DURATION_SECONDS)
         except asyncio.TimeoutError:
