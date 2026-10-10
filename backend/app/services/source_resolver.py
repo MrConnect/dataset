@@ -155,45 +155,63 @@ class BackendSourceResolver:
 
     @staticmethod
     async def _resolve_mp4(media_url: str, headers: dict[str, str]) -> tuple[list[VideoQualitySchema], float | None]:
-        # Probe using ffprobe safely with headers
         ua = headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
-        other_headers = {k: v for k, v in headers.items() if k.lower() != "user-agent"}
-        headers_str = "".join(f"{k}: {v}\r\n" for k, v in other_headers.items())
         
         cmd = [
-            "ffprobe",
-            "-v", "error",
-            "-user_agent", ua,
-            "-headers", headers_str,
-            "-show_entries", "format=duration:stream=width,height,codec_name",
-            "-of", "json",
-            media_url,
+            "yt-dlp",
+            "--dump-json",
+            "--no-warnings",
+            "--user-agent", ua,
         ]
+        
+        for k, v in headers.items():
+            if k.lower() != "user-agent":
+                cmd.extend(["--add-header", f"{k}:{v}"])
+                
+        cmd.append(media_url)
 
         try:
-            # ffprobe is a blocking process. Keep it off the ASGI event loop so
-            # source discovery cannot starve health checks and dashboard APIs.
             res = await asyncio.to_thread(
                 subprocess.run,
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=15,
+                timeout=20,
             )
             if res.returncode == 0:
                 data = json.loads(res.stdout)
-                duration = float(data.get("format", {}).get("duration", 0)) or None
-                video_stream = next((s for s in data.get("streams", []) if "width" in s), None)
-                if video_stream:
-                    h = video_stream.get("height")
-                    w = video_stream.get("width")
-                    c = video_stream.get("codec_name")
-                    return [VideoQualitySchema(height=h, width=w, codecs=c, label=f"{h}p ({c})", variant_url=media_url)], duration
-        except Exception:
-            pass
+                duration = data.get("duration")
+                formats = data.get("formats", [])
+                
+                qualities = []
+                seen_heights = set()
+                
+                for f in formats:
+                    h = f.get("height")
+                    if not h or h < 240:
+                        continue
+                    if h in seen_heights:
+                        continue
+                        
+                    seen_heights.add(h)
+                    w = f.get("width")
+                    c = f.get("vcodec")
+                    qualities.append(VideoQualitySchema(
+                        height=h, 
+                        width=w, 
+                        codecs=c if c != "none" else None, 
+                        label=f"{h}p", 
+                        variant_url=media_url
+                    ))
+                
+                if qualities:
+                    qualities.sort(key=lambda q: q.height, reverse=True)
+                    return qualities, duration
+        except Exception as e:
+            print(f"[BackendSourceResolver] yt-dlp probe failed: {e}")
 
-        # Default fallback qualities for direct MP4
+        # Default fallback qualities
         return [
             VideoQualitySchema(height=1080, label="1080p (Original)", variant_url=media_url),
             VideoQualitySchema(height=720, label="720p (HD)", variant_url=media_url),

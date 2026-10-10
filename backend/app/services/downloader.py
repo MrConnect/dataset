@@ -236,6 +236,7 @@ class VideoDownloader:
         headers: dict[str, str] | None = None,
         duration_seconds: float | None = None,
         progress_callback = None,
+        target_height: int | None = None,
     ) -> tuple[Path, float]:
         """
         Downloads the source video once per job into temporary storage.
@@ -263,6 +264,7 @@ class VideoDownloader:
                 duration_seconds,
                 progress_callback,
                 is_hls=is_hls,
+                target_height=target_height,
             )
         else:
             await VideoDownloader._download_direct_http(target_url, output_file, req_headers, progress_callback)
@@ -303,7 +305,7 @@ class VideoDownloader:
                                 last_reported_pct = pct
 
     @staticmethod
-    async def _download_via_ffmpeg(url: str, destination: Path, headers: dict[str, str], duration_seconds: float | None = None, progress_callback = None, is_hls: bool = False) -> None:
+    async def _download_via_ffmpeg(url: str, destination: Path, headers: dict[str, str], duration_seconds: float | None = None, progress_callback = None, is_hls: bool = False, target_height: int | None = None) -> None:
         import re
         ua = headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
         
@@ -317,9 +319,14 @@ class VideoDownloader:
                 "--retry-sleep", "fragment:exp=1:20",
                 "--merge-output-format", "mp4",
                 "--remux-video", "mp4",
+            ]
+            if target_height:
+                cmd.extend(["-S", f"res:{target_height}"])
+            
+            cmd.extend([
                 "--user-agent", ua,
                 "--no-warnings"
-            ]
+            ])
             for k, v in headers.items():
                 if k.lower() != "user-agent":
                     cmd.extend(["--add-header", f"{k}:{v}"])

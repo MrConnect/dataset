@@ -121,7 +121,8 @@ class JobWorkerQueue:
                             media_type=resolved_type,
                             headers=req_headers,
                             duration_seconds=job.duration_seconds,
-                            progress_callback=on_download_progress
+                            progress_callback=on_download_progress,
+                            target_height=job.quality_height,
                         )
                     except Exception as source_error:
                         failure = classify_download_error(source_error)
