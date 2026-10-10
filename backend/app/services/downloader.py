@@ -316,6 +316,7 @@ class VideoDownloader:
                 "--fragment-retries", "10",
                 "--retry-sleep", "fragment:exp=1:20",
                 "--merge-output-format", "mp4",
+                "--remux-video", "mp4",
                 "--user-agent", ua,
                 "--no-warnings"
             ]

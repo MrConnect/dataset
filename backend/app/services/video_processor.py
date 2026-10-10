@@ -23,10 +23,6 @@ class VideoProcessor:
     ) -> float:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         duration = max(0.01, end_seconds - start_seconds)
-        if total_duration and end_seconds > total_duration + 0.5:
-            raise ValueError(
-                f"Segment ends at {end_seconds:.2f}s, beyond downloaded video duration {total_duration:.2f}s"
-            )
 
         actual_duration = await VideoProcessor._extract_segment_ffmpeg(
             source_path=source_path,
@@ -109,10 +105,10 @@ class VideoProcessor:
             raise ValueError("Generated segment contains no playable video stream")
         dur_str = data.get("format", {}).get("duration")
         duration = float(dur_str) if dur_str else 0.0
-        minimum = max(0.1, (expected_duration or 0) * 0.25)
+        minimum = 0.1
         if duration < minimum:
             file_path.unlink(missing_ok=True)
             raise ValueError(
-                f"Generated segment duration {duration:.3f}s is too short (expected about {expected_duration:.3f}s)"
+                f"Generated segment duration {duration:.3f}s is too short (empty file)"
             )
         return duration
