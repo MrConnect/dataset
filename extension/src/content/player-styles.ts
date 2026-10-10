@@ -375,6 +375,88 @@ export const PLAYER_INTEGRATION_STYLES = `
   background: #475569 !important;
   border-radius: 3px !important;
 }
+/* Seek Bar */
+.vdt-seek-container {
+  width: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  padding: 4px 0 !important;
+  cursor: pointer !important;
+  position: absolute !important;
+  top: -16px !important;
+  left: 0 !important;
+  right: 0 !important;
+}
+
+.vdt-seek-bar {
+  -webkit-appearance: none !important;
+  width: 100% !important;
+  height: 4px !important;
+  background: rgba(255, 255, 255, 0.2) !important;
+  border-radius: 2px !important;
+  outline: none !important;
+  margin: 0 !important;
+  transition: height 0.1s ease !important;
+}
+
+.vdt-seek-bar:hover {
+  height: 6px !important;
+}
+
+.vdt-seek-bar::-webkit-slider-thumb {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 12px !important;
+  height: 12px !important;
+  border-radius: 50% !important;
+  background: #38bdf8 !important;
+  cursor: pointer !important;
+  box-shadow: 0 0 5px rgba(0,0,0,0.5) !important;
+  transition: transform 0.1s ease !important;
+}
+
+.vdt-seek-bar::-webkit-slider-thumb:hover {
+  transform: scale(1.3) !important;
+}
+
+/* Time display */
+.vdt-time-display {
+  font-variant-numeric: tabular-nums !important;
+  color: #e2e8f0 !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  margin-left: 8px !important;
+  margin-right: 8px !important;
+}
+
+/* Collapsed Ball */
+.vdt-collapsed-ball {
+  position: absolute !important;
+  bottom: 48px !important;
+  right: 20px !important;
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 50% !important;
+  background: rgba(11, 17, 32, 0.95) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  z-index: 2147483647 !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  color: #38bdf8 !important;
+}
+
+.vdt-collapsed-ball:hover {
+  transform: scale(1.1) !important;
+  background: rgba(30, 41, 59, 0.95) !important;
+  border-color: #38bdf8 !important;
+}
+
 `;
 
 export function injectPlayerStyles(): void {

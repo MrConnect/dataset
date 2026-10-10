@@ -30,6 +30,8 @@ export class PlayerBar {
   private onCategoryChangeRequest?: (categoryId: string) => void;
   private onCreateCategoryRequest?: (name: string) => void;
 
+  private isDraggingSeek: boolean = false;
+
   constructor(videoEl: HTMLVideoElement, playerParent: HTMLElement) {
     this.videoEl = videoEl;
     this.playerParent = playerParent;
@@ -44,7 +46,6 @@ export class PlayerBar {
 
     this.playerParent.appendChild(this.container);
 
-    // Close popovers if clicking outside
     document.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
       if (!target.closest('.vdt-popover-container')) {
@@ -55,24 +56,8 @@ export class PlayerBar {
       }
     });
 
-    // Don't pause video when clicking controls
-    this.container.addEventListener('click', (e) => e.stopPropagation());
-    this.container.addEventListener('mousedown', (e) => e.stopPropagation());
-    this.container.addEventListener('dblclick', (e) => e.stopPropagation());
-
-    this.render();
-  }
-
-  public reparent(newParent: HTMLElement): void {
-    this.playerParent = newParent;
-    const pos = window.getComputedStyle(this.playerParent).position;
-    if (pos === 'static') {
-      this.playerParent.style.position = 'relative';
-    }
-    if (this.container.parentElement !== newParent) {
-      newParent.appendChild(this.container);
-    }
-    this.render();
+    this.videoEl.addEventListener('play', () => this.syncPlayState());
+    this.videoEl.addEventListener('pause', () => this.syncPlayState());
   }
 
   public setCallbacks(callbacks: {
@@ -97,8 +82,30 @@ export class PlayerBar {
     this.onCreateCategoryRequest = callbacks.onCreateCategory;
   }
 
-  public updateTime(_currentTime: number, _duration: number): void {
-    // Currently relying on native player for time, but keeping API for compatibility
+  public updateTime(currentTime: number, duration: number): void {
+    if (!this.isPinned) return; 
+
+    const timeDisp = this.container.querySelector('#vdt-time-display');
+    if (timeDisp) {
+      timeDisp.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
+    }
+
+    if (!this.isDraggingSeek) {
+      const seek = this.container.querySelector('#vdt-seek-bar') as HTMLInputElement;
+      if (seek && duration > 0) {
+        seek.value = (currentTime / duration * 100).toString();
+      }
+    }
+  }
+
+  private syncPlayState(): void {
+    if (!this.isPinned) return;
+    const btn = this.container.querySelector('#vdt-btn-play');
+    if (btn) {
+      btn.innerHTML = this.videoEl.paused 
+        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>' 
+        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
+    }
   }
 
   public updateState(state: Partial<any>): void {
@@ -115,7 +122,33 @@ export class PlayerBar {
     this.render();
   }
 
+  public reparent(newParent: HTMLElement): void {
+    this.playerParent = newParent;
+    const pos = window.getComputedStyle(this.playerParent).position;
+    if (pos === 'static') {
+      this.playerParent.style.position = 'relative';
+    }
+    if (this.container.parentElement !== newParent) {
+      newParent.appendChild(this.container);
+    }
+    this.render();
+  }
+
   private render(): void {
+    if (!this.isPinned) {
+      this.container.className = 'vdt-collapsed-ball';
+      this.container.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"></path><path d="M9 21H3v-6"></path><path d="M21 3l-7 7"></path><path d="M3 21l7-7"></path></svg>`;
+      this.container.onclick = (e) => {
+        e.stopPropagation();
+        this.isPinned = true;
+        this.render();
+      };
+      return;
+    }
+
+    this.container.className = 'vdt-player-bar vdt-visible';
+    this.container.onclick = null;
+
     const hasSelection = this.startMarker !== null;
     const isEditing = !!this.editingSegmentId;
 
@@ -137,122 +170,162 @@ export class PlayerBar {
 
     const arrowSvg = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
 
+    const playIcon = this.videoEl.paused 
+      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`
+      : `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
+
     this.container.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 6px;">
-        <button id="vdt-btn-in" class="vdt-btn" title="Mark Start [">
-          [ In: ${this.startMarker !== null ? formatTime(this.startMarker) : '--:--'}
-        </button>
-        <button id="vdt-btn-out" class="vdt-btn" title="Mark End ]">
-          ] Out: ${this.endMarker !== null ? formatTime(this.endMarker) : '--:--'}
-        </button>
-        
-        ${
-          hasSelection
-            ? `<button id="vdt-btn-save" class="vdt-btn vdt-btn-primary" title="Save Segment">
-                ${isEditing ? 'Update' : 'Save'}
-              </button>`
-            : ''
-        }
-        
-        ${
-          hasSelection || isEditing
-            ? `<button id="vdt-btn-reset" class="vdt-btn" style="padding: 5px 8px; color: #94a3b8;" title="Cancel selection (Esc)">
-                ${isEditing ? 'Cancel' : 'Clear'}
-              </button>`
-            : ''
-        }
+      <div class="vdt-seek-container">
+        <input type="range" id="vdt-seek-bar" class="vdt-seek-bar" min="0" max="100" value="${this.videoEl.duration ? (this.videoEl.currentTime / this.videoEl.duration * 100) : 0}" step="0.1" />
       </div>
 
-      <div style="display: flex; align-items: center; gap: 6px;">
-        <span style="color: #64748b; font-size: 10px;">Label:</span>
-        <div class="vdt-popover-container">
-          <div id="vdt-cat-trigger" class="vdt-popover-trigger ${this.openPopover === 'category' ? 'active' : ''}">
-            <span class="vdt-dot" style="background: ${catColor};"></span>
-            <span>${catName}</span>
-            <span style="color: #94a3b8; margin-left: 2px;">${arrowSvg}</span>
-          </div>
+      <div style="display: flex; align-items: center; width: 100%; justify-content: space-between; padding-top: 4px;">
+        
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <button id="vdt-btn-play" class="vdt-btn" style="padding: 5px 8px; color: #fff;" title="Play/Pause">
+            ${playIcon}
+          </button>
 
+          <span id="vdt-time-display" class="vdt-time-display">
+            ${formatTime(this.videoEl.currentTime)} / ${formatTime(this.videoEl.duration || 0)}
+          </span>
+
+          <button id="vdt-btn-in" class="vdt-btn" style="margin-left: 8px;" title="Mark Start [">
+            [ ${this.startMarker !== null ? formatTime(this.startMarker) : 'In'}
+          </button>
+          <button id="vdt-btn-out" class="vdt-btn" title="Mark End ]">
+            ] ${this.endMarker !== null ? formatTime(this.endMarker) : 'Out'}
+          </button>
+          
           ${
-            this.openPopover === 'category'
-              ? `
-            <div class="vdt-popover-menu" style="min-width: 170px;">
-              ${this.categories
-                .map(
-                  (c) => `
-                <div class="vdt-popover-item ${c.id === this.selectedCategoryId ? 'selected' : ''}" data-cat-id="${c.id}">
-                  <span style="display: flex; align-items: center; gap: 6px;">
-                    <span class="vdt-dot" style="background: ${c.color};"></span>
-                    <span>${c.name}</span>
-                  </span>
-                </div>
-              `
-                )
-                .join('')}
-              <div id="vdt-btn-new-cat" class="vdt-popover-item" style="border-top: 1px solid #334155; margin-top: 4px; padding-top: 6px; color: #38bdf8; font-weight: 600;">
-                + Create Label...
-              </div>
-            </div>
-          `
+            hasSelection
+              ? `<button id="vdt-btn-save" class="vdt-btn vdt-btn-primary" title="Save Segment">
+                  ${isEditing ? 'Update' : 'Save'}
+                </button>`
+              : ''
+          }
+          
+          ${
+            hasSelection || isEditing
+              ? `<button id="vdt-btn-reset" class="vdt-btn" style="padding: 5px 8px; color: #94a3b8;" title="Cancel selection (Esc)">
+                  ${isEditing ? 'Cancel' : 'Clear'}
+                </button>`
               : ''
           }
         </div>
-      </div>
 
-      <div style="display: flex; align-items: center; gap: 6px;">
-        <div class="vdt-popover-container">
-          <div id="vdt-quality-trigger" class="vdt-popover-trigger ${this.openPopover === 'quality' ? 'active' : ''}">
-            <span>Quality: ${currentQualityLabel}</span>
-            <span style="color: #94a3b8; margin-left: 2px;">${arrowSvg}</span>
-          </div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span style="color: #64748b; font-size: 10px;">Label:</span>
+          <div class="vdt-popover-container">
+            <div id="vdt-cat-trigger" class="vdt-popover-trigger ${this.openPopover === 'category' ? 'active' : ''}">
+              <span class="vdt-dot" style="background: ${catColor};"></span>
+              <span>${catName}</span>
+              <span style="color: #94a3b8; margin-left: 2px;">${arrowSvg}</span>
+            </div>
 
-          ${
-            this.openPopover === 'quality'
-              ? `
-            <div class="vdt-popover-menu vdt-popover-menu-right">
-              ${qualitiesList
-                .map((q) => {
-                  const isSel = this.selectedQuality?.height === q.height || this.selectedQuality?.variant_url === q.variant_url;
-                  return `
-                  <div class="vdt-popover-item ${isSel ? 'selected' : ''}" data-q-height="${q.height || 1080}">
-                    <span>${q.label || `${q.height}p`}</span>
+            ${
+              this.openPopover === 'category'
+                ? `
+              <div class="vdt-popover-menu" style="min-width: 170px;">
+                ${this.categories
+                  .map(
+                    (c) => `
+                  <div class="vdt-popover-item ${c.id === this.selectedCategoryId ? 'selected' : ''}" data-cat-id="${c.id}">
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                      <span class="vdt-dot" style="background: ${c.color};"></span>
+                      <span>${c.name}</span>
+                    </span>
                   </div>
-                `;
-                })
-                .join('')}
+                `
+                  )
+                  .join('')}
+                <div id="vdt-btn-new-cat" class="vdt-popover-item" style="border-top: 1px solid #334155; margin-top: 4px; padding-top: 6px; color: #38bdf8; font-weight: 600;">
+                  + Create Label...
+                </div>
+              </div>
+            `
+                : ''
+            }
+          </div>
+
+          <div class="vdt-popover-container" style="margin-left: 4px;">
+            <div id="vdt-quality-trigger" class="vdt-popover-trigger ${this.openPopover === 'quality' ? 'active' : ''}">
+              <span>${currentQualityLabel}</span>
+              <span style="color: #94a3b8; margin-left: 2px;">${arrowSvg}</span>
             </div>
-          `
-              : ''
-          }
+
+            ${
+              this.openPopover === 'quality'
+                ? `
+              <div class="vdt-popover-menu vdt-popover-menu-right">
+                ${qualitiesList
+                  .map((q) => {
+                    const isSel = this.selectedQuality?.height === q.height || this.selectedQuality?.variant_url === q.variant_url;
+                    return `
+                    <div class="vdt-popover-item ${isSel ? 'selected' : ''}" data-q-height="${q.height || 1080}">
+                      <span>${q.label || `${q.height}p`}</span>
+                    </div>
+                  `;
+                  })
+                  .join('')}
+              </div>
+            `
+                : ''
+            }
+          </div>
+
+          <button id="vdt-btn-drawer" class="vdt-btn" style="border-color: #3b82f6; color: #93c5fd; margin-left: 4px;" title="Segments">
+            Segments (${this.segments.length})
+          </button>
+
+          <button id="vdt-btn-send" class="vdt-btn vdt-btn-success" ${
+            this.segments.length === 0 || this.isSubmitting ? 'disabled' : ''
+          } title="Submit to server">
+            ${this.isSubmitting ? 'Sending...' : 'Send'}
+          </button>
+          
+          <button id="vdt-btn-pin" class="vdt-btn" style="padding: 5px 8px; color: #94a3b8; font-size: 11px; margin-left: 4px;" title="Hide Player Controls">
+            Hide
+          </button>
         </div>
-
-        <button id="vdt-btn-drawer" class="vdt-btn" style="border-color: #3b82f6; color: #93c5fd;" title="Segments">
-          Segments (${this.segments.length})
-        </button>
-
-        <button id="vdt-btn-send" class="vdt-btn vdt-btn-success" ${
-          this.segments.length === 0 || this.isSubmitting ? 'disabled' : ''
-        } title="Submit to server">
-          ${this.isSubmitting ? 'Sending...' : 'Send'}
-        </button>
-        
-        <button id="vdt-btn-pin" class="vdt-btn" style="padding: 5px 7px; color: ${this.isPinned ? '#38bdf8' : '#94a3b8'}; font-size: 10px;" title="Toggle UI Visibility">
-          ${this.isPinned ? 'Visible' : 'Hidden'}
-        </button>
       </div>
     `;
 
     this.attachEvents(qualitiesList);
-    
-    if (!this.isPinned) {
-        this.container.classList.remove('vdt-visible');
-        this.container.classList.add('vdt-hidden');
-    } else {
-        this.container.classList.remove('vdt-hidden');
-        this.container.classList.add('vdt-visible');
-    }
   }
 
   private attachEvents(qualitiesList: VideoQuality[]): void {
+    const seek = this.container.querySelector('#vdt-seek-bar') as HTMLInputElement;
+    if (seek) {
+      seek.addEventListener('input', () => {
+        this.isDraggingSeek = true;
+        const val = parseFloat(seek.value);
+        if (this.videoEl.duration) {
+          const newTime = (val / 100) * this.videoEl.duration;
+          const timeDisp = this.container.querySelector('#vdt-time-display');
+          if (timeDisp) {
+            timeDisp.textContent = `${formatTime(newTime)} / ${formatTime(this.videoEl.duration)}`;
+          }
+        }
+      });
+      seek.addEventListener('change', () => {
+        this.isDraggingSeek = false;
+        const val = parseFloat(seek.value);
+        if (this.videoEl.duration) {
+          this.videoEl.currentTime = (val / 100) * this.videoEl.duration;
+        }
+      });
+    }
+
+    this.container.querySelector('#vdt-btn-play')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (this.videoEl.paused) {
+        this.videoEl.play().catch(()=>{});
+      } else {
+        this.videoEl.pause();
+      }
+    });
+
     this.container.querySelector('#vdt-btn-in')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.onMarkStartRequest?.(this.videoEl.currentTime);
@@ -332,7 +405,7 @@ export class PlayerBar {
 
     this.container.querySelector('#vdt-btn-pin')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.isPinned = !this.isPinned;
+      this.isPinned = false;
       this.render();
     });
   }
