@@ -108,6 +108,12 @@ export class PlayerIntegratedController {
       onCreateCategory: (name) => {
         this.createNewCategory(name);
       },
+      onPlayToggle: () => {
+        this.adapter.togglePlay();
+      },
+      onSeek: (time: number) => {
+        this.adapter.seek(time);
+      },
     });
 
     // Drawer callbacks
@@ -125,6 +131,9 @@ export class PlayerIntegratedController {
     this.adapter.onTimeUpdate((currentTime, duration) => {
       this.timeline.updateTime(currentTime, duration);
       this.bar.updateTime(currentTime, duration);
+    });
+    this.adapter.onPlayStateChange((paused) => {
+      this.bar.syncPlayState(paused);
     });
   }
 

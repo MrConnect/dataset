@@ -29,6 +29,8 @@ export class PlayerBar {
   private onQualityChangeRequest?: (quality: VideoQuality) => void;
   private onCategoryChangeRequest?: (categoryId: string) => void;
   private onCreateCategoryRequest?: (name: string) => void;
+  private onPlayToggleRequest?: () => void;
+  private onSeekRequest?: (time: number) => void;
 
   private isDraggingSeek: boolean = false;
 
@@ -55,9 +57,6 @@ export class PlayerBar {
         }
       }
     });
-
-    this.videoEl.addEventListener('play', () => this.syncPlayState());
-    this.videoEl.addEventListener('pause', () => this.syncPlayState());
   }
 
   public setCallbacks(callbacks: {
@@ -70,6 +69,8 @@ export class PlayerBar {
     onQualityChange: (quality: VideoQuality) => void;
     onCategoryChange: (categoryId: string) => void;
     onCreateCategory: (name: string) => void;
+    onPlayToggle: () => void;
+    onSeek: (time: number) => void;
   }): void {
     this.onMarkStartRequest = callbacks.onMarkStart;
     this.onMarkEndRequest = callbacks.onMarkEnd;
@@ -80,6 +81,8 @@ export class PlayerBar {
     this.onQualityChangeRequest = callbacks.onQualityChange;
     this.onCategoryChangeRequest = callbacks.onCategoryChange;
     this.onCreateCategoryRequest = callbacks.onCreateCategory;
+    this.onPlayToggleRequest = callbacks.onPlayToggle;
+    this.onSeekRequest = callbacks.onSeek;
   }
 
   public updateTime(currentTime: number, duration: number): void {
@@ -98,11 +101,11 @@ export class PlayerBar {
     }
   }
 
-  private syncPlayState(): void {
+  public syncPlayState(paused: boolean): void {
     if (!this.isPinned) return;
     const btn = this.container.querySelector('#vdt-btn-play');
     if (btn) {
-      btn.innerHTML = this.videoEl.paused 
+      btn.innerHTML = paused 
         ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>' 
         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
     }
@@ -312,18 +315,15 @@ export class PlayerBar {
         this.isDraggingSeek = false;
         const val = parseFloat(seek.value);
         if (this.videoEl.duration) {
-          this.videoEl.currentTime = (val / 100) * this.videoEl.duration;
+          const newTime = (val / 100) * this.videoEl.duration;
+          this.onSeekRequest?.(newTime);
         }
       });
     }
 
     this.container.querySelector('#vdt-btn-play')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (this.videoEl.paused) {
-        this.videoEl.play().catch(()=>{});
-      } else {
-        this.videoEl.pause();
-      }
+      this.onPlayToggleRequest?.();
     });
 
     this.container.querySelector('#vdt-btn-in')?.addEventListener('click', (e) => {

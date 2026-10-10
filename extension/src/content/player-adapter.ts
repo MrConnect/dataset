@@ -14,6 +14,7 @@ export class PlayerAdapter {
   private element: HTMLVideoElement;
   private index: number;
   private onTimeUpdateCallback?: (time: number, duration: number) => void;
+  private onPlayStateChangeCallback?: (paused: boolean) => void;
 
   constructor(element: HTMLVideoElement, index: number) {
     this.element = element;
@@ -27,10 +28,20 @@ export class PlayerAdapter {
         this.onTimeUpdateCallback(this.element.currentTime, this.element.duration || 0);
       }
     });
+    this.element.addEventListener('play', () => {
+      if (this.onPlayStateChangeCallback) this.onPlayStateChangeCallback(false);
+    });
+    this.element.addEventListener('pause', () => {
+      if (this.onPlayStateChangeCallback) this.onPlayStateChangeCallback(true);
+    });
   }
 
   public onTimeUpdate(cb: (time: number, duration: number) => void): void {
     this.onTimeUpdateCallback = cb;
+  }
+
+  public onPlayStateChange(cb: (paused: boolean) => void): void {
+    this.onPlayStateChangeCallback = cb;
   }
 
   public getInfo(): PlayerInfo {
