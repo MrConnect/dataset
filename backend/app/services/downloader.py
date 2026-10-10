@@ -392,7 +392,7 @@ class VideoDownloader:
             destination.unlink(missing_ok=True)
             raise TimeoutError("FFmpeg/yt-dlp stream download timed out.")
             
-        if process.returncode != 0:
+        if process.returncode != 0 and not destination.exists():
             err_output = "\n".join(error_log)
             raise RuntimeError(f"FFmpeg/yt-dlp download failed (code {process.returncode}):\n{err_output}")
 
