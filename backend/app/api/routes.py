@@ -360,3 +360,26 @@ async def list_categories(
         )
         for c in categories
     ]
+@router.get("/debug_error")
+async def get_last_error():
+    from app.db.models import Job, Segment
+    from sqlalchemy import select
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Job).where(Job.status == 'failed').order_by(Job.created_at.desc())
+        )
+        job = result.scalars().first()
+        if not job:
+            return {"error": "No failed jobs found."}
+        
+        seg_res = await session.execute(
+            select(Segment).where(Segment.job_id == job.id, Segment.status == 'failed')
+        )
+        segments = seg_res.scalars().all()
+        seg_errors = {seg.segment_id: seg.error for seg in segments}
+
+        return {
+            "job_id": job.id,
+            "job_error": job.error,
+            "segment_errors": seg_errors
+        }
