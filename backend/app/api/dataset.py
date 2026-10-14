@@ -79,6 +79,8 @@ def get_target_path(category: str, filename: str = "") -> Path:
         filename = validate_path_component(filename, "filename")
     if category == "_downloads":
         d = Path(settings.BASE_STORAGE_DIR) / "downloads"
+    elif category == "_temp":
+        d = get_temp_dir()
     elif category == "_database":
         d = Path(settings.BASE_STORAGE_DIR)
     else:
@@ -144,7 +146,24 @@ async def list_dataset(db: AsyncSession = Depends(get_db)):
             "videos": sorted(downloads, key=lambda x: x["created_at"], reverse=True)
         })
 
-    # 3. System Database
+    # 3. Temporary processing files
+    temp_dir = get_temp_dir()
+    temporary_files = []
+    for file in temp_dir.iterdir():
+        if file.is_file():
+            temporary_files.append({
+                "filename": file.name,
+                "size": file.stat().st_size,
+                "created_at": file.stat().st_ctime,
+                "url": f"/storage/temp/{file.name}"
+            })
+    categories.append({
+        "name": "_temp",
+        "display_name": "Temporary Files",
+        "videos": sorted(temporary_files, key=lambda x: x["created_at"], reverse=True)
+    })
+
+    # 4. System Database
     db_path = Path(settings.BASE_STORAGE_DIR) / "tagger.db"
     if db_path.exists():
         categories.append({

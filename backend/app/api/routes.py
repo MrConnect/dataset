@@ -131,11 +131,11 @@ async def submit_job(
 
     # Read category state before adding pending rows. This prevents a lookup from
     # triggering an early autoflush and gives database failures one clear path.
-    existing_category_ids: set[str] = set()
+    existing_categories: dict[str, CategoryModel] = {}
     if payload.categories_metadata:
         ids = [category.id for category in payload.categories_metadata]
-        existing_res = await db.execute(select(CategoryModel.id).where(CategoryModel.id.in_(ids)))
-        existing_category_ids = set(existing_res.scalars().all())
+        existing_res = await db.execute(select(CategoryModel).where(CategoryModel.id.in_(ids)))
+        existing_categories = {category.id: category for category in existing_res.scalars().all()}
 
     job = Job(
         id=job_id,
@@ -169,7 +169,13 @@ async def submit_job(
     # Sync categories metadata if provided
     if payload.categories_metadata:
         for cat in payload.categories_metadata:
-            if cat.id not in existing_category_ids:
+            existing = existing_categories.get(cat.id)
+            if existing:
+                existing.name = cat.name
+                existing.color = cat.color
+                existing.description = cat.description
+                existing.shortcut = cat.shortcut
+            else:
                 db.add(
                     CategoryModel(
                         id=cat.id,
@@ -360,6 +366,50 @@ async def list_categories(
         )
         for c in categories
     ]
+
+
+@router.post("/categories/sync", response_model=list[CategorySchema])
+async def sync_categories(
+    payload: list[CategorySchema],
+    _auth: Annotated[str, Depends(verify_api_key)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge browser categories into the shared server category registry."""
+    if len(payload) > 500:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Too many categories")
+
+    ids = [category.id for category in payload]
+    existing: dict[str, CategoryModel] = {}
+    if ids:
+        res = await db.execute(select(CategoryModel).where(CategoryModel.id.in_(ids)))
+        existing = {category.id: category for category in res.scalars().all()}
+
+    for category in payload:
+        current = existing.get(category.id)
+        if current:
+            current.name = category.name
+            current.color = category.color
+            current.description = category.description
+            current.shortcut = category.shortcut
+        else:
+            db.add(CategoryModel(**category.model_dump()))
+
+    await db.commit()
+    return await list_categories(_auth, db)
+
+
+@router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_category(
+    category_id: str,
+    _auth: Annotated[str, Depends(verify_api_key)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a label from the shared registry without deleting produced clips."""
+    category = await db.get(CategoryModel, category_id)
+    if not category:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    await db.delete(category)
+    await db.commit()
 @router.get("/debug_error")
 async def get_last_error():
     from app.db.models import Job, Segment

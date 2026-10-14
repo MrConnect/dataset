@@ -1,4 +1,4 @@
-import { JobPayload, JobResponse, VideoQuality } from '../types';
+import { Category, JobPayload, JobResponse, VideoQuality } from '../types';
 import { StorageService } from './storage';
 
 export interface ResolveSourceResponse {
@@ -142,6 +142,36 @@ export class ApiClient {
     }
 
     return await res.json();
+  }
+
+  static async listCategories(): Promise<Category[]> {
+    const baseUrl = await this.getBaseUrl();
+    const headers = await this.getHeaders();
+    const res = await fetch(`${baseUrl}/api/v1/categories`, { method: 'GET', headers });
+    if (!res.ok) throw await this.responseError(res, 'Failed to load labels');
+    return await res.json();
+  }
+
+  static async syncCategories(categories: Category[]): Promise<Category[]> {
+    const baseUrl = await this.getBaseUrl();
+    const headers = await this.getHeaders();
+    const res = await fetch(`${baseUrl}/api/v1/categories/sync`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(categories),
+    });
+    if (!res.ok) throw await this.responseError(res, 'Failed to sync labels');
+    return await res.json();
+  }
+
+  static async deleteCategory(categoryId: string): Promise<void> {
+    const baseUrl = await this.getBaseUrl();
+    const headers = await this.getHeaders();
+    const res = await fetch(`${baseUrl}/api/v1/categories/${encodeURIComponent(categoryId)}`, {
+      method: 'DELETE',
+      headers,
+    });
+    if (!res.ok && res.status !== 404) throw await this.responseError(res, 'Failed to delete label');
   }
 
   static async cancelJob(jobId: string): Promise<JobResponse> {

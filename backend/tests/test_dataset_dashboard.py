@@ -72,3 +72,27 @@ async def test_bulk_delete_and_move(client, monkeypatch, tmp_path: Path):
     assert (dataset_dir / "target" / "one.mp4").read_bytes() == b"one"
     assert deleted.status_code == 200
     assert not (source / "two.mp4").exists()
+
+
+@pytest.mark.asyncio
+async def test_temp_files_are_listed_and_can_be_deleted(client, monkeypatch, tmp_path: Path):
+    from app.api import dataset
+
+    storage_dir = tmp_path / "storage"
+    temp_dir = storage_dir / "temp"
+    dataset_dir = storage_dir / "dataset"
+    temp_dir.mkdir(parents=True)
+    temporary = temp_dir / "stale-segment.mp4"
+    temporary.write_bytes(b"temporary")
+    monkeypatch.setattr(dataset.settings, "BASE_STORAGE_DIR", str(storage_dir))
+    monkeypatch.setattr(dataset.settings, "TEMP_DIR", str(temp_dir))
+    monkeypatch.setattr(dataset.settings, "DATASET_DIR", str(dataset_dir))
+
+    listed = await client.get("/api/v1/dataset/")
+    assert listed.status_code == 200
+    temp_category = next(category for category in listed.json()["categories"] if category["name"] == "_temp")
+    assert [item["filename"] for item in temp_category["videos"]] == ["stale-segment.mp4"]
+
+    deleted = await client.delete("/api/v1/dataset/_temp/stale-segment.mp4")
+    assert deleted.status_code == 200
+    assert not temporary.exists()

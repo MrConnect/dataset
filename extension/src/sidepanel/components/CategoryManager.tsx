@@ -4,12 +4,16 @@ import { generateId } from '../../utils/uuid';
 
 interface CategoryManagerProps {
   categories: Category[];
-  onSaveCategories: (categories: Category[]) => void;
+  onSaveCategories: (categories: Category[]) => Promise<void>;
+  syncState: 'syncing' | 'synced' | 'offline';
+  onSync: () => Promise<void>;
 }
 
 export const CategoryManager: React.FC<CategoryManagerProps> = ({
   categories,
   onSaveCategories,
+  syncState,
+  onSync,
 }) => {
   const [name, setName] = useState('');
   const [color, setColor] = useState('#22C55E');
@@ -17,7 +21,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
   const [shortcut, setShortcut] = useState('');
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
 
-  const handleCreateOrUpdate = (e: React.FormEvent) => {
+  const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
@@ -33,7 +37,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
             }
           : cat
       );
-      onSaveCategories(updated);
+      await onSaveCategories(updated);
       setEditingCatId(null);
     } else {
       const newCat: Category = {
@@ -43,7 +47,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
         description: description.trim() || undefined,
         shortcut: shortcut.trim() || undefined,
       };
-      onSaveCategories([...categories, newCat]);
+      await onSaveCategories([...categories, newCat]);
     }
 
     setName('');
@@ -60,9 +64,9 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
     setShortcut(cat.shortcut || '');
   };
 
-  const handleDelete = (catId: string) => {
+  const handleDelete = async (catId: string) => {
     if (confirm('Are you sure you want to delete this category?')) {
-      onSaveCategories(categories.filter((c) => c.id !== catId));
+      await onSaveCategories(categories.filter((c) => c.id !== catId));
     }
   };
 
@@ -81,7 +85,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
         if (Array.isArray(parsed)) {
@@ -93,7 +97,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
             description: item.description ? String(item.description) : undefined,
             shortcut: item.shortcut ? String(item.shortcut) : undefined,
           }));
-          onSaveCategories(valid);
+          await onSaveCategories(valid);
           alert(`Successfully imported ${valid.length} categories.`);
         }
       } catch (err) {
@@ -106,6 +110,14 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      <div className="card" style={{ padding: '9px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: '11px', color: syncState === 'offline' ? '#fca5a5' : 'var(--text-secondary)' }}>
+          {syncState === 'synced' ? 'Labels synced with server' : syncState === 'syncing' ? 'Syncing labels…' : 'Server unavailable — saved locally'}
+        </span>
+        <button className="btn btn-secondary btn-sm" onClick={() => void onSync()} disabled={syncState === 'syncing'}>
+          Sync now
+        </button>
+      </div>
       {/* Category Editor Card */}
       <div className="card">
         <div className="card-title">

@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS: ExtensionSettings = {
 const DB_NAME = 'VideoDatasetTaggerDB';
 const DB_VERSION = 1;
 const STORE_SESSIONS = 'tagging_sessions';
+const CATEGORY_SYNC_MARKER = 'tagger_categories_server_sync_v1';
 
 /**
  * Open or upgrade IndexedDB
@@ -88,6 +89,22 @@ export const StorageService = {
       await chrome.storage.local.set({ tagger_categories: categories });
     } else {
       localStorage.setItem('tagger_categories', JSON.stringify(categories));
+    }
+  },
+
+  async isCategorySyncInitialized(): Promise<boolean> {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      const res = await chrome.storage.local.get(CATEGORY_SYNC_MARKER);
+      return res[CATEGORY_SYNC_MARKER] === true;
+    }
+    return localStorage.getItem(CATEGORY_SYNC_MARKER) === 'true';
+  },
+
+  async markCategorySyncInitialized(): Promise<void> {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      await chrome.storage.local.set({ [CATEGORY_SYNC_MARKER]: true });
+    } else {
+      localStorage.setItem(CATEGORY_SYNC_MARKER, 'true');
     }
   },
 

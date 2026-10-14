@@ -21,9 +21,18 @@ class VideoDetector {
 
   private async init(): Promise<void> {
     this.categories = await StorageService.getCategories();
+    this.setupCategoryListener();
     this.setupMessageListener();
     this.setupSpaListener();
     console.log('[VideoDetector] Network-first detection initialized in frame.');
+  }
+
+  private setupCategoryListener(): void {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local' || !changes.tagger_categories?.newValue) return;
+      this.categories = changes.tagger_categories.newValue as Category[];
+      this.controllers.forEach((controller) => controller.setCategories(this.categories));
+    });
   }
 
   private isHtmlPageUrl(url: string): boolean {

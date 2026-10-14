@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Category } from '../types';
 import { StorageService } from '../services/storage';
+import { ApiClient } from '../services/api-client';
 import { CategoryManager } from './components/CategoryManager';
 import { JobStatusView } from './components/JobStatusView';
 import { SettingsModal } from './components/SettingsModal';
@@ -8,28 +9,68 @@ import { SettingsModal } from './components/SettingsModal';
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'categories' | 'jobs' | 'settings'>('jobs');
   const [categories, setCategories] = useState<Category[]>([]);
-  
-  const refreshTabData = async () => {
+  const [labelSyncState, setLabelSyncState] = useState<'syncing' | 'synced' | 'offline'>('syncing');
+
+  const mergeCategories = (remote: Category[], local: Category[]): Category[] => {
+    const merged = new Map(remote.map((category) => [category.id, category]));
+    local.forEach((category) => merged.set(category.id, category));
+    return Array.from(merged.values());
+  };
+
+  const syncLabels = async () => {
     try {
-      const dbCategories = await StorageService.getCategories();
-      setCategories(dbCategories);
+      setLabelSyncState('syncing');
+      const localCategories = await StorageService.getCategories();
+      const remoteCategories = await ApiClient.listCategories();
+      const initialized = await StorageService.isCategorySyncInitialized();
+      const effectiveCategories = initialized
+        ? remoteCategories
+        : await ApiClient.syncCategories(mergeCategories(remoteCategories, localCategories));
+
+      await StorageService.saveCategories(effectiveCategories);
+      await StorageService.markCategorySyncInitialized();
+      setCategories(effectiveCategories);
+      setLabelSyncState('synced');
     } catch (err) {
-      console.warn('Failed to refresh data', err);
+      console.warn('Failed to sync labels; keeping the local copy', err);
+      setCategories(await StorageService.getCategories());
+      setLabelSyncState('offline');
     }
   };
 
   useEffect(() => {
-    refreshTabData();
+    void syncLabels();
+    const interval = window.setInterval(() => void syncLabels(), 10000);
     const handleChange = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-      if (changes.categories) void refreshTabData();
+      if (changes.tagger_categories?.newValue) {
+        setCategories(changes.tagger_categories.newValue as Category[]);
+      }
+      if (changes.tagger_settings) void syncLabels();
     };
     chrome.storage.onChanged.addListener(handleChange);
-    return () => chrome.storage.onChanged.removeListener(handleChange);
+    return () => {
+      window.clearInterval(interval);
+      chrome.storage.onChanged.removeListener(handleChange);
+    };
   }, []);
 
   const handleSaveCategories = async (updatedCategories: Category[]) => {
     setCategories(updatedCategories);
     await StorageService.saveCategories(updatedCategories);
+    setLabelSyncState('syncing');
+    try {
+      const updatedIds = new Set(updatedCategories.map((category) => category.id));
+      const removedIds = categories.filter((category) => !updatedIds.has(category.id)).map((category) => category.id);
+      await Promise.all(removedIds.map((categoryId) => ApiClient.deleteCategory(categoryId)));
+      const authoritative = await ApiClient.syncCategories(updatedCategories);
+      await StorageService.saveCategories(authoritative);
+      await StorageService.markCategorySyncInitialized();
+      setCategories(authoritative);
+      setLabelSyncState('synced');
+    } catch (err) {
+      console.warn('Labels were saved locally but server sync failed', err);
+      setLabelSyncState('offline');
+    }
   };
 
   return (
@@ -93,7 +134,12 @@ export const App: React.FC = () => {
       {/* Content Body */}
       <div className="content-body">
         {activeTab === 'categories' && (
-          <CategoryManager categories={categories} onSaveCategories={handleSaveCategories} />
+          <CategoryManager
+            categories={categories}
+            onSaveCategories={handleSaveCategories}
+            syncState={labelSyncState}
+            onSync={() => syncLabels()}
+          />
         )}
 
         {activeTab === 'jobs' && <JobStatusView lastSubmittedJobId={null} />}

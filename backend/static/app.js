@@ -4,7 +4,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const state = {dataset: [], jobs: [], health: null, view: "overview", category: "all", jobFilter: "all", search: "", sort: "newest", selected: new Set(), anchorKey: null, focusedKey: null, moveFiles: [], cutFiles: [], sourceJob: null, confirmResolve: null};
 const labels = {overview:["OPERATIONS","Overview"],library:["DATA MANAGEMENT","Dataset library"],jobs:["PIPELINE","Processing jobs"],system:["CONFIGURATION","System & connection"]};
-const systemNames = {_downloads:"Source downloads",_database:"System files"};
+const systemNames = {_downloads:"Source downloads",_temp:"Temporary files",_database:"System files"};
 
 function escapeHtml(value="") { const node=document.createElement("div"); node.textContent=String(value); return node.innerHTML; }
 function apiKey(){ return localStorage.getItem("frameforge_api_key") || ""; }

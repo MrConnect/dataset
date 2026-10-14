@@ -29,6 +29,28 @@ async def test_auth_rejection(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_categories_are_merged_updated_and_deleted(client: AsyncClient, auth_headers: dict):
+    category = {
+        "id": "sync_test_label",
+        "name": "First name",
+        "color": "#112233",
+        "description": "Created on one browser",
+    }
+    created = await client.post("/api/v1/categories/sync", json=[category], headers=auth_headers)
+    assert created.status_code == 200
+    assert any(item["id"] == category["id"] for item in created.json())
+
+    category["name"] = "Updated name"
+    updated = await client.post("/api/v1/categories/sync", json=[category], headers=auth_headers)
+    synced = next(item for item in updated.json() if item["id"] == category["id"])
+    assert synced["name"] == "Updated name"
+
+    deleted = await client.delete(f"/api/v1/categories/{category['id']}", headers=auth_headers)
+    assert deleted.status_code == 204
+    listed = await client.get("/api/v1/categories", headers=auth_headers)
+    assert all(item["id"] != category["id"] for item in listed.json())
+
+@pytest.mark.asyncio
 async def test_submit_job_validation(client: AsyncClient, auth_headers: dict):
     # Test invalid interval (end_seconds <= start_seconds)
     invalid_payload = {
