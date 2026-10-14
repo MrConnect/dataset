@@ -21,6 +21,7 @@ from app.schemas.job import (
 )
 from app.schemas.source import SourceResolveRequest, SourceResolveResponse
 from app.services.source_resolver import BackendSourceResolver
+from app.services.storage_manager import StorageManager
 from app.workers.queue import JobWorkerQueue
 
 router = APIRouter(prefix="/api/v1")
@@ -303,19 +304,18 @@ async def delete_job(
     _auth: Annotated[str, Depends(verify_api_key)],
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Job).where(Job.id == job_id)
-    res = await db.execute(query)
-    job = res.scalar_one_or_none()
-    
+    job = await db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if job.source_file_path:
-        Path(job.source_file_path).unlink(missing_ok=True)
-
+    # The same endpoint is the full rollback operation for queued, active and
+    # finished jobs. The worker performs another sweep in its finally block so
+    # an in-flight FFmpeg process cannot recreate an artifact after this call.
+    JobWorkerQueue.purge_job(job_id)
+    cleanup = StorageManager.delete_job_files(job_id, job.source_file_path)
     await db.delete(job)
     await db.commit()
-    return {"ok": True}
+    return {"ok": True, "job_id": job_id, **cleanup}
 
 @router.post("/jobs/{job_id}/cancel")
 async def cancel_job(

@@ -252,9 +252,11 @@ class VideoDownloader:
         is_hls = media_type == "hls" or ".m3u8" in target_url.lower()
         is_dash = media_type == "dash" or ".mpd" in target_url.lower()
 
-        # Keep HLS in its native MPEG-TS container. Remuxing long HLS streams
-        # yt-dlp natively fixes and merges HLS segments perfectly into MP4 containers.
-        output_file = settings.temp_path / f"{job_id}_source.mp4"
+        # Keep HLS in its native MPEG-TS timeline. Remuxing a long playlist to
+        # MP4 can rewrite discontinuities/edit timestamps and make browser
+        # currentTime ranges land on different source frames.
+        output_suffix = ".ts" if is_hls else ".mp4"
+        output_file = settings.temp_path / f"{job_id}_source{output_suffix}"
 
         if is_hls or is_dash:
             await VideoDownloader._download_via_ffmpeg(
@@ -314,12 +316,11 @@ class VideoDownloader:
                 "yt-dlp",
                 "--newline",
                 "--hls-prefer-native",
+                "--hls-use-mpegts",
                 "--concurrent-fragments", "4",
                 "--retries", "10",
                 "--fragment-retries", "10",
                 "--retry-sleep", "fragment:exp=1:20",
-                "--merge-output-format", "mp4",
-                "--remux-video", "mp4",
             ]
             if target_height:
                 cmd.extend(["-S", f"res:{target_height}"])

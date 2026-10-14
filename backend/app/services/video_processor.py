@@ -1,14 +1,9 @@
 import asyncio
 import json
+import math
 from pathlib import Path
-import subprocess
 
 from app.services.downloader import _run_subprocess_sync
-
-
-import hashlib
-
-_DOWNLOAD_LOCKS = {}
 
 class VideoProcessor:
     @staticmethod
@@ -22,7 +17,25 @@ class VideoProcessor:
         **kwargs,
     ) -> float:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        duration = max(0.01, end_seconds - start_seconds)
+        if not math.isfinite(start_seconds) or not math.isfinite(end_seconds):
+            raise ValueError("Segment timestamps must be finite numbers")
+        if start_seconds < 0 or end_seconds <= start_seconds:
+            raise ValueError("Segment end time must be greater than its non-negative start time")
+
+        if total_duration is not None and math.isfinite(total_duration) and total_duration > 0:
+            if start_seconds >= total_duration:
+                raise ValueError(
+                    f"Segment start {start_seconds:.3f}s is beyond downloaded video duration {total_duration:.3f}s"
+                )
+            if end_seconds > total_duration:
+                overrun = end_seconds - total_duration
+                if overrun > 0.05:
+                    raise ValueError(
+                        f"Segment end {end_seconds:.3f}s is beyond downloaded video duration {total_duration:.3f}s"
+                    )
+                end_seconds = total_duration
+
+        duration = end_seconds - start_seconds
 
         actual_duration = await VideoProcessor._extract_segment_ffmpeg(
             source_path=source_path,
@@ -42,32 +55,23 @@ class VideoProcessor:
         headers: dict[str, str] | None = None,
     ) -> float:
         source_str = str(source_path)
-        is_remote = source_str.startswith("http://") or source_str.startswith("https://")
-
-        remote_args = []
-        if is_remote and headers:
-            ua = headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
-            headers_list = [f"{k}: {v}" for k, v in headers.items() if k.lower() != "user-agent"]
-            if "Origin" not in headers and "Referer" in headers:
-                ref = headers["Referer"]
-                origin = "/".join(ref.split("/")[:3])
-                headers_list.append(f"Origin: {origin}")
-            headers_str = "".join(f"{h}\r\n" for h in headers_list)
-            remote_args = ["-user_agent", ua, "-headers", headers_str]
-
-        from app.config import settings
-        
         # --- FRAME-ACCURATE CUTTING FROM LOCAL FILE ---
-        # The source_str is already guaranteed to be a downloaded local file in temp path.
+        # Input seeking remains fast while accurate_seek (FFmpeg default while
+        # transcoding) decodes/discards frames up to the requested timestamp.
+        # Explicit trims reset timestamps and prevent CFR from manufacturing
+        # extra frames around the requested end boundary.
+        duration_text = f"{duration:.6f}"
         cmd_cut = [
             "ffmpeg", "-y", "-nostdin", "-v", "warning",
-            "-ss", f"{start_seconds:.3f}",
+            "-ss", f"{start_seconds:.6f}",
             "-i", source_str,
-            "-t", f"{duration:.3f}",
+            "-t", duration_text,
             "-map", "0:v:0?", "-map", "0:a:0?",
+            "-vf", f"trim=duration={duration_text},setpts=PTS-STARTPTS",
+            "-af", f"atrim=duration={duration_text},asetpts=PTS-STARTPTS",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
             "-c:a", "aac", "-b:a", "128k",
-            "-avoid_negative_ts", "make_zero", "-fps_mode", "cfr",
+            "-map_metadata", "-1", "-map_chapters", "-1",
             "-movflags", "+faststart",
             str(output_path)
         ]
@@ -111,4 +115,15 @@ class VideoProcessor:
             raise ValueError(
                 f"Generated segment duration {duration:.3f}s is too short (empty file)"
             )
+        if expected_duration is not None:
+            # MP4/AAC timestamps and the source frame grid can differ by a few
+            # milliseconds. Anything beyond 120 ms is a real range transfer
+            # error rather than normal frame/audio rounding.
+            drift = abs(duration - expected_duration)
+            if drift > 0.12:
+                file_path.unlink(missing_ok=True)
+                raise ValueError(
+                    f"Generated segment duration drifted by {drift:.3f}s "
+                    f"(expected {expected_duration:.3f}s, got {duration:.3f}s)"
+                )
         return duration

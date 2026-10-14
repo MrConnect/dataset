@@ -17,6 +17,7 @@ logger = logging.getLogger("worker")
 class JobWorkerQueue:
     _queue: asyncio.Queue[str] = asyncio.Queue()
     _cancelled_jobs: set[str] = set()
+    _purge_jobs: set[str] = set()
     _workers: list[asyncio.Task] = []
     _running: bool = False
 
@@ -44,12 +45,21 @@ class JobWorkerQueue:
         cls._cancelled_jobs.add(job_id)
 
     @classmethod
+    def purge_job(cls, job_id: str) -> None:
+        """Cancel a job and request a final artifact sweep by its worker."""
+        cls._cancelled_jobs.add(job_id)
+        cls._purge_jobs.add(job_id)
+
+    @classmethod
     async def _worker_loop(cls, worker_id: int) -> None:
         while cls._running:
             try:
                 job_id = await cls._queue.get()
                 if job_id in cls._cancelled_jobs:
-                    cls._cancelled_jobs.remove(job_id)
+                    if job_id in cls._purge_jobs:
+                        StorageManager.delete_job_files(job_id)
+                        cls._purge_jobs.discard(job_id)
+                    cls._cancelled_jobs.discard(job_id)
                     cls._queue.task_done()
                     continue
 
@@ -73,8 +83,6 @@ class JobWorkerQueue:
                 return
 
             if job.id in cls._cancelled_jobs:
-                job.status = "cancelled"
-                await session.commit()
                 return
 
             try:
@@ -155,8 +163,7 @@ class JobWorkerQueue:
                 job.error = None
 
                 if job.id in cls._cancelled_jobs:
-                    job.status = "cancelled"
-                    await session.commit()
+                    await session.rollback()
                     return
 
                 # 2. Transition to processing segments
@@ -176,8 +183,7 @@ class JobWorkerQueue:
                 total_segments = len(segments)
                 for idx, seg in enumerate(segments):
                     if job.id in cls._cancelled_jobs:
-                        job.status = "cancelled"
-                        await session.commit()
+                        await session.rollback()
                         return
 
                     temp_cut_out = settings.temp_path / f"{job.id}_{seg.segment_id}_cut.mp4"
@@ -191,6 +197,11 @@ class JobWorkerQueue:
                             total_duration=job.duration_seconds or probed_duration,
                             headers=headers_to_use,
                         )
+
+                        if job.id in cls._cancelled_jobs:
+                            temp_cut_out.unlink(missing_ok=True)
+                            await session.rollback()
+                            return
 
                         stored_files = StorageManager.store_segment_files(
                             job_id=job.id,
@@ -214,6 +225,10 @@ class JobWorkerQueue:
                             "status": "completed",
                         })
                     except Exception as seg_err:
+                        if job.id in cls._cancelled_jobs:
+                            temp_cut_out.unlink(missing_ok=True)
+                            await session.rollback()
+                            return
                         err_str = f"Segment {seg.segment_id} failed: {seg_err}"
                         logger.error(err_str)
                         seg.status = "failed"
@@ -259,6 +274,9 @@ class JobWorkerQueue:
                 await session.commit()
 
             except Exception as e:
+                if job_id in cls._cancelled_jobs:
+                    await session.rollback()
+                    return
                 logger.error(f"Job {job_id} processing failed: {e}", exc_info=True)
                 failure = classify_download_error(e)
                 job.status = "awaiting_source" if failure.source_required else "failed"
@@ -268,10 +286,17 @@ class JobWorkerQueue:
                 await session.commit()
 
             finally:
-                # Cleanup downloaded source temp file if local Path
-                if source_path and not source_should_persist and isinstance(source_path, Path) and source_path.exists():
+                if job_id in cls._purge_jobs:
+                    StorageManager.delete_job_files(
+                        job_id,
+                        str(source_path) if source_path else None,
+                    )
+                    cls._purge_jobs.discard(job_id)
+                    cls._cancelled_jobs.discard(job_id)
+                # Cleanup non-persistent downloaded sources instead of leaving
+                # multi-gigabyte debug artifacts behind.
+                elif source_path and not source_should_persist and isinstance(source_path, Path) and source_path.exists():
                     try:
-                        # source_path.unlink(missing_ok=True)
-                        print(f"Skipping deletion of {source_path} for debugging purposes.")
+                        source_path.unlink(missing_ok=True)
                     except Exception:
                         pass

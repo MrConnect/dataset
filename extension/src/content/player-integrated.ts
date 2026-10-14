@@ -19,6 +19,8 @@ export class PlayerIntegratedController {
   private drawer: PlayerDrawer;
 
   private activeSource: DetectedSource | null = null;
+  private sourceCandidates: Map<string, DetectedSource> = new Map();
+  private readonly handleLoadedMetadata = () => this.selectBestSource();
   private categories: Category[] = [];
   private segments: Segment[] = [];
   private selectedCategoryId: string = 'person_walking';
@@ -47,6 +49,7 @@ export class PlayerIntegratedController {
     this.bindKeyboardShortcuts();
     this.loadPersistedData();
     this.setupFullscreenListener();
+    this.videoEl.addEventListener('loadedmetadata', this.handleLoadedMetadata);
   }
 
   private setupFullscreenListener(): void {
@@ -190,11 +193,56 @@ export class PlayerIntegratedController {
   }
 
   public setSource(source: DetectedSource): void {
-    this.activeSource = source;
-    if (source.qualities && source.qualities.length > 0 && !this.selectedQuality) {
-      this.selectedQuality = source.qualities[0];
+    this.sourceCandidates.set(source.media_url, source);
+    this.selectBestSource();
+  }
+
+  private sourceScore(source: DetectedSource): number {
+    const currentSrc = this.videoEl.currentSrc || this.videoEl.src;
+    if (currentSrc && !currentSrc.startsWith('blob:') && currentSrc === source.media_url) {
+      return 1000;
+    }
+
+    const videoDuration = this.videoEl.duration;
+    const sourceDuration = source.duration_seconds;
+    if (Number.isFinite(videoDuration) && videoDuration > 0 && Number.isFinite(sourceDuration) && sourceDuration! > 0) {
+      const difference = Math.abs(videoDuration - sourceDuration!);
+      const tolerance = Math.max(2, videoDuration * 0.003);
+      if (difference > tolerance) return -difference;
+      return 500 - difference;
+    }
+
+    // A source without duration can be used as a fallback, but it must never
+    // replace a candidate already proven to match the visible player's timebase.
+    return 10;
+  }
+
+  private selectBestSource(): void {
+    const candidates = Array.from(this.sourceCandidates.values());
+    if (candidates.length === 0) return;
+    candidates.sort((a, b) => this.sourceScore(b) - this.sourceScore(a));
+    const best = candidates[0];
+    const bestScore = this.sourceScore(best);
+    const currentScore = this.activeSource ? this.sourceScore(this.activeSource) : Number.NEGATIVE_INFINITY;
+
+    if (bestScore < 0 || (this.activeSource && currentScore > bestScore)) return;
+    this.activeSource = best;
+    if (best.qualities && best.qualities.length > 0) {
+      const stillAvailable = this.selectedQuality && best.qualities.some(
+        (quality) => quality.variant_url === this.selectedQuality?.variant_url && quality.height === this.selectedQuality?.height
+      );
+      if (!stillAvailable) this.selectedQuality = best.qualities[0];
     }
     this.syncComponents();
+  }
+
+  private sourceMatchesPlayerTimeline(source: DetectedSource): boolean {
+    const videoDuration = this.videoEl.duration;
+    const sourceDuration = source.duration_seconds;
+    if (!Number.isFinite(videoDuration) || videoDuration <= 0 || !Number.isFinite(sourceDuration) || sourceDuration! <= 0) {
+      return true;
+    }
+    return Math.abs(videoDuration - sourceDuration!) <= Math.max(2, videoDuration * 0.003);
   }
 
   public setCategories(categories: Category[]): void {
@@ -411,9 +459,18 @@ export class PlayerIntegratedController {
       return;
     }
 
+    if (this.activeSource && !this.sourceMatchesPlayerTimeline(this.activeSource)) {
+      alert('The detected stream duration does not match the visible video timeline. Reload the video and wait for detection before submitting, so segment times are not shifted.');
+      return;
+    }
+
     const mediaUrl = this.activeSource?.media_url || this.videoEl.currentSrc || this.videoEl.src;
     if (!mediaUrl) {
       alert('No video media URL identified for export.');
+      return;
+    }
+    if (mediaUrl.startsWith('blob:')) {
+      alert('The player only exposes a temporary blob URL and no matching network stream was detected yet. Wait a moment or reload the video before submitting.');
       return;
     }
 
@@ -465,6 +522,7 @@ export class PlayerIntegratedController {
   }
 
   public destroy(): void {
+    this.videoEl.removeEventListener('loadedmetadata', this.handleLoadedMetadata);
     this.timeline.destroy();
     this.bar.destroy();
     this.drawer.destroy();

@@ -159,7 +159,7 @@ export class ApiClient {
     return await res.json();
   }
 
-  static async deleteJob(jobId: string): Promise<void> {
+  static async deleteJob(jobId: string): Promise<{ ok: boolean; deleted_files: number; deleted_bytes: number }> {
     const baseUrl = await this.getBaseUrl();
     const headers = await this.getHeaders();
     const res = await fetch(`${baseUrl}/api/v1/jobs/${encodeURIComponent(jobId)}`, {
@@ -170,6 +170,7 @@ export class ApiClient {
     if (!res.ok) {
       throw await this.responseError(res, 'Failed to delete job');
     }
+    return await res.json();
   }
 
   static async uploadJobSource(jobId: string, file: File): Promise<void> {

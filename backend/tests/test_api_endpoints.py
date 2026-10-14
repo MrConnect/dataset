@@ -1,5 +1,10 @@
 import pytest
+from pathlib import Path
 from httpx import AsyncClient
+
+from app.config import settings
+from app.db.session import AsyncSessionLocal
+from app.models.job import Job
 
 
 @pytest.mark.asyncio
@@ -132,3 +137,61 @@ async def test_submit_valid_job_and_retrieve(client: AsyncClient, auth_headers: 
     cancel_res = await client.post(f"/api/v1/jobs/{job_id}/cancel", headers=auth_headers)
     assert cancel_res.status_code == 200
     assert cancel_res.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_undo_job_deletes_database_and_all_artifacts(
+    client: AsyncClient,
+    auth_headers: dict,
+    monkeypatch,
+    tmp_path: Path,
+):
+    dataset_dir = tmp_path / "dataset"
+    storage_dir = tmp_path / "storage"
+    temp_dir = storage_dir / "temp"
+    monkeypatch.setattr(settings, "DATASET_DIR", str(dataset_dir))
+    monkeypatch.setattr(settings, "BASE_STORAGE_DIR", str(storage_dir))
+    monkeypatch.setattr(settings, "TEMP_DIR", str(temp_dir))
+
+    payload = {
+        "schema_version": "2.0",
+        "source": {
+            "page_url": "https://example.com/watch",
+            "media_url": "https://example.com/video.mp4",
+            "type": "mp4",
+            "duration_seconds": 30.0,
+        },
+        "segments": [
+            {
+                "id": "seg_delete_me",
+                "start_seconds": 2.0,
+                "end_seconds": 4.0,
+                "categories": ["walking"],
+            }
+        ],
+    }
+    submitted = await client.post("/api/v1/jobs", json=payload, headers=auth_headers)
+    assert submitted.status_code == 202
+    job_id = submitted.json()["job_id"]
+
+    source = storage_dir / "downloads" / f"{job_id}_source.mp4"
+    temporary = temp_dir / f"{job_id}_seg_delete_me_cut.mp4"
+    clip = dataset_dir / "walking" / f"{job_id}_seg_delete_me.mp4"
+    metadata = dataset_dir / "metadata" / f"{job_id}.json"
+    for path in (source, temporary, clip, metadata):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"artifact")
+
+    async with AsyncSessionLocal() as session:
+        job = await session.get(Job, job_id)
+        assert job is not None
+        job.source_file_path = str(source)
+        await session.commit()
+
+    deleted = await client.delete(f"/api/v1/jobs/{job_id}", headers=auth_headers)
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted_files"] == 4
+    assert all(not path.exists() for path in (source, temporary, clip, metadata))
+
+    missing = await client.get(f"/api/v1/jobs/{job_id}", headers=auth_headers)
+    assert missing.status_code == 404

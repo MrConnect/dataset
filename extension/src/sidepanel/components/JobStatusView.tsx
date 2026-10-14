@@ -11,6 +11,7 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadingJob, setUploadingJob] = useState<string | null>(null);
+  const [deletingJob, setDeletingJob] = useState<string | null>(null);
 
   const fetchJobs = async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -45,13 +46,18 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
     }
   };
 
-  const handleDeleteJob = async (jobId: string) => {
-    if (!confirm('Are you sure you want to delete this job and all its data?')) return;
+  const handleUndoJob = async (jobId: string) => {
+    if (!confirm('Undo this job completely? This cancels any active processing and permanently deletes its downloaded source, generated clips, temporary files, metadata, and job record.')) return;
+    setDeletingJob(jobId);
     try {
-      await ApiClient.deleteJob(jobId);
-      fetchJobs();
+      const result = await ApiClient.deleteJob(jobId);
+      await fetchJobs();
+      const megabytes = (result.deleted_bytes / (1024 * 1024)).toFixed(1);
+      alert(`Job undone. Deleted ${result.deleted_files} files (${megabytes} MB).`);
     } catch (err: any) {
-      alert(`Error deleting job: ${err.message}`);
+      alert(`Error undoing job: ${err.message}`);
+    } finally {
+      setDeletingJob(null);
     }
   };
 
@@ -144,7 +150,7 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {jobs.map((job) => {
-              const isFinished = job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
+              const isFinished = job.status === 'completed' || job.status === 'partially_completed' || job.status === 'failed' || job.status === 'cancelled';
               const needsSource = job.status === 'awaiting_source' || job.source_required;
               return (
                 <div key={job.job_id} style={{ padding: '6px 8px', backgroundColor: 'var(--bg-primary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
@@ -202,11 +208,17 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
                       }}>
                         Export
                       </button>
-                      {!isFinished ? (
-                        <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px', color: 'var(--accent-red)' }} onClick={() => handleCancelJob(job.job_id)}>Cancel</button>
-                      ) : isFinished ? (
-                        <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px', color: 'var(--accent-red)' }} onClick={() => handleDeleteJob(job.job_id)}>Delete</button>
-                      ) : null}
+                      {!isFinished && (
+                        <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px' }} onClick={() => handleCancelJob(job.job_id)}>Cancel</button>
+                      )}
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '2px 6px', fontSize: '10px', color: 'var(--accent-red)' }}
+                        disabled={deletingJob === job.job_id}
+                        onClick={() => void handleUndoJob(job.job_id)}
+                      >
+                        {deletingJob === job.job_id ? 'Undoing…' : 'Undo job'}
+                      </button>
                     </div>
                   </div>
                 </div>
