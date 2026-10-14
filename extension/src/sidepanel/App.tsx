@@ -11,24 +11,10 @@ export const App: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [labelSyncState, setLabelSyncState] = useState<'syncing' | 'synced' | 'offline'>('syncing');
 
-  const mergeCategories = (remote: Category[], local: Category[]): Category[] => {
-    const merged = new Map(remote.map((category) => [category.id, category]));
-    local.forEach((category) => merged.set(category.id, category));
-    return Array.from(merged.values());
-  };
-
   const syncLabels = async () => {
     try {
       setLabelSyncState('syncing');
-      const localCategories = await StorageService.getCategories();
-      const remoteCategories = await ApiClient.listCategories();
-      const initialized = await StorageService.isCategorySyncInitialized();
-      const effectiveCategories = initialized
-        ? remoteCategories
-        : await ApiClient.syncCategories(mergeCategories(remoteCategories, localCategories));
-
-      await StorageService.saveCategories(effectiveCategories);
-      await StorageService.markCategorySyncInitialized();
+      const effectiveCategories = await ApiClient.syncStoredCategories();
       setCategories(effectiveCategories);
       setLabelSyncState('synced');
     } catch (err) {

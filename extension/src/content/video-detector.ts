@@ -20,6 +20,11 @@ class VideoDetector {
   }
 
   private async init(): Promise<void> {
+    try {
+      await chrome.runtime.sendMessage({ type: 'SYNC_CATEGORIES' });
+    } catch (err) {
+      console.warn('[VideoDetector] Server label sync unavailable; using local labels.', err);
+    }
     this.categories = await StorageService.getCategories();
     this.setupCategoryListener();
     this.setupMessageListener();

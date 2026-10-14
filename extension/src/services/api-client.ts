@@ -164,6 +164,23 @@ export class ApiClient {
     return await res.json();
   }
 
+  static async syncStoredCategories(): Promise<Category[]> {
+    const localCategories = await StorageService.getCategories();
+    const remoteCategories = await this.listCategories();
+    const initialized = await StorageService.isCategorySyncInitialized();
+    let effectiveCategories = remoteCategories;
+
+    if (!initialized) {
+      const merged = new Map(remoteCategories.map((category) => [category.id, category]));
+      localCategories.forEach((category) => merged.set(category.id, category));
+      effectiveCategories = await this.syncCategories(Array.from(merged.values()));
+    }
+
+    await StorageService.saveCategories(effectiveCategories);
+    await StorageService.markCategorySyncInitialized();
+    return effectiveCategories;
+  }
+
   static async deleteCategory(categoryId: string): Promise<void> {
     const baseUrl = await this.getBaseUrl();
     const headers = await this.getHeaders();

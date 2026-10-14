@@ -4,6 +4,9 @@ import { ApiClient } from '../services/api-client';
 
 // Initialize network requests listener
 NetworkMonitor.initialize();
+ApiClient.syncStoredCategories().catch((err) =>
+  console.warn('[ServiceWorker] Initial label sync failed:', err)
+);
 
 // Configure Side Panel behavior on extension install or startup
 chrome.runtime.onInstalled.addListener(() => {
@@ -17,6 +20,13 @@ chrome.runtime.onInstalled.addListener(() => {
 // Relay messages between Side Panel, Content Scripts, and background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
+
+  if (message.type === 'SYNC_CATEGORIES') {
+    ApiClient.syncStoredCategories()
+      .then((categories) => sendResponse({ ok: true, categories }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 
   // Forward keyboard shortcuts to all frames in the sender's tab
   if (message.type === 'FORWARD_SHORTCUT') {
