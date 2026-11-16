@@ -300,3 +300,16 @@ body.dragging-files .category-button[data-droppable] { border-color: #c6d4f8; bo
 /* The library is a file view: never select page text by accident (Shift+Click, Ctrl+A). */
 .library, .selection, .file-grid { user-select: none; -webkit-user-select: none; }
 .library input, .rename-input { user-select: text; -webkit-user-select: text; }
+
+/* Tooltips near the right edge open leftwards so they never widen the page. */
+.notice [data-tip]::after, .panel-head [data-tip]::after, .toolbar > [data-tip]:last-child::after { left: auto; right: 0; transform: translate(0, -3px); }
+.notice [data-tip]:hover::after, .panel-head [data-tip]:hover::after, .toolbar > [data-tip]:last-child:hover::after { transform: none; }
+/* Safety net: nothing inside the main column may cause sideways scrolling. */
+main { overflow-x: clip; }
+
+/* Client keys that can be shown again */
+.key-row.revealed { background: var(--green-soft); margin: 0 -10px; padding: 12px 10px; border-radius: 10px; }
+.key-value { display: block; margin-top: 4px; padding: 0; background: transparent; font-size: 12px; word-break: break-all; user-select: all; cursor: text; }
+.key-note { display: inline-grid; place-items: center; width: 30px; height: 30px; color: #b3bdcc; }
+.key-note .icon { width: 15px; height: 15px; }
+

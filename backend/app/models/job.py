@@ -77,6 +77,9 @@ class ApiKey(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    # The key itself, encrypted with a secret derived from the admin key, so the
+    # admin can show it again. Null for keys created before this existed.
+    key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

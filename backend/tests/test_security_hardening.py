@@ -106,3 +106,40 @@ def test_ssrf_blocks_ipv4_tunnelled_in_ipv6(monkeypatch):
     ):
         with pytest.raises(SSRFBlocked):
             validate_url_safety(url)
+
+
+@pytest.mark.asyncio
+async def test_admin_can_show_a_client_key_again(client, auth_headers):
+    created = (await client.post("/api/v1/keys", json={"name": "Desktop"}, headers=auth_headers)).json()
+    assert created["revealable"] is True
+
+    listed = (await client.get("/api/v1/keys", headers=auth_headers)).json()
+    assert listed[0]["revealable"] is True and "key" not in listed[0]
+
+    shown = await client.get(f"/api/v1/keys/{created['id']}/reveal", headers=auth_headers)
+    assert shown.status_code == 200
+    assert shown.json()["key"] == created["key"]
+    assert shown.headers["cache-control"] == "no-store"
+
+    # A client key can never read keys, including its own.
+    client_headers = {"X-API-Key": created["key"]}
+    assert (await client.get(f"/api/v1/keys/{created['id']}/reveal", headers=client_headers)).status_code == 403
+    assert (await client.get("/api/v1/keys/missing/reveal", headers=auth_headers)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_key_stored_encrypted_and_unreadable_after_admin_key_change(client, auth_headers, monkeypatch):
+    from app.db.session import AsyncSessionLocal
+    from app.models.job import ApiKey
+
+    created = (await client.post("/api/v1/keys", json={"name": "Laptop"}, headers=auth_headers)).json()
+    async with AsyncSessionLocal() as session:
+        record = await session.get(ApiKey, created["id"])
+        assert record.key_encrypted and created["key"] not in record.key_encrypted
+
+    # With a different admin key the stored value cannot be decrypted; the key still works.
+    monkeypatch.setattr(settings, "API_KEY", "rotated-admin-key")
+    rotated = {"X-API-Key": "rotated-admin-key"}
+    blocked = await client.get(f"/api/v1/keys/{created['id']}/reveal", headers=rotated)
+    assert blocked.status_code == 409
+    assert (await client.get("/api/v1/categories", headers={"X-API-Key": created["key"]})).status_code == 200

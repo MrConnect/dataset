@@ -22,6 +22,8 @@ from app.core.security import (
     create_media_session_token,
     generate_client_key,
     hash_key,
+    open_client_key,
+    seal_client_key,
     require_admin,
     verify_api_key,
 )
@@ -76,6 +78,7 @@ class KeyInfo(BaseModel):
     prefix: str
     created_at: datetime
     last_used_at: datetime | None = None
+    revealable: bool = False
 
 
 class KeyCreated(KeyInfo):
@@ -89,6 +92,7 @@ def _key_info(record: ApiKey) -> KeyInfo:
         prefix=record.prefix,
         created_at=record.created_at,
         last_used_at=record.last_used_at,
+        revealable=bool(record.key_encrypted),
     )
 
 
@@ -100,17 +104,35 @@ async def list_keys(_admin: AdminKey, db: AsyncSession = Depends(get_db)):
 
 @router.post("/keys", response_model=KeyCreated, status_code=status.HTTP_201_CREATED, tags=["Keys"])
 async def create_key(req: KeyCreateRequest, _admin: AdminKey, db: AsyncSession = Depends(get_db)):
-    """Create a client key. The plaintext is returned once and never stored."""
+    """Create a client key. It can be shown again later by the admin."""
     plaintext = generate_client_key()
     record = ApiKey(
         id=uuid.uuid4().hex[:16],
         name=req.name.strip(),
         key_hash=hash_key(plaintext),
         prefix=plaintext[:10],
+        key_encrypted=seal_client_key(plaintext),
     )
     db.add(record)
     await db.commit()
     return KeyCreated(**_key_info(record).model_dump(), key=plaintext)
+
+
+@router.get("/keys/{key_id}/reveal", tags=["Keys"])
+async def reveal_key(key_id: str, response: Response, _admin: AdminKey, db: AsyncSession = Depends(get_db)):
+    """Show a client key again (admin only)."""
+    record = await db.get(ApiKey, key_id)
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Key not found")
+    plaintext = open_client_key(record.key_encrypted)
+    if plaintext is None or hash_key(plaintext) != record.key_hash:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This key can't be shown again (it was created before keys were stored, or the admin key changed). "
+                   "It still works; create a new one if you need to see it.",
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return {"id": record.id, "key": plaintext}
 
 
 @router.delete("/keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Keys"])

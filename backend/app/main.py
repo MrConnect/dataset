@@ -101,7 +101,11 @@ async def security_headers(request, call_next):
         response.headers["Cache-Control"] = "no-cache"
         response.headers.setdefault(
             "Content-Security-Policy",
+            # Cloudflare (in front of the deployment) injects its Web Analytics
+            # beacon; allow exactly that script and its reporting endpoint.
             "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; "
+            "script-src 'self' https://static.cloudflareinsights.com; "
+            "connect-src 'self' https://cloudflareinsights.com; "
             "style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
         )
     return response

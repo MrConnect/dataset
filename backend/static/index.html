@@ -36,6 +36,7 @@
     <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3"/></symbol>
     <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19zM12 10v4M12 17v.5"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 10.6a3 3 0 0 0 4.2 4.2M9.9 5.2A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
     <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></symbol>
     <symbol id="i-select-all" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m8 12 3 3 5-6"/></symbol>
@@ -175,7 +176,6 @@
             <div class="panel-title"><svg class="icon"><use href="#i-key"/></svg><div><p class="eyebrow">EXTENSION ACCESS</p><h2>Client keys</h2></div></div>
             <p class="muted">Generate a separate key for each browser extension and paste it into the extension's settings. Client keys can submit and manage jobs but cannot manage keys or the database, and each one can be revoked on its own.</p>
             <form id="keyForm" class="inline-form"><input id="keyName" required maxlength="128" placeholder="Name, e.g. Laptop — Edge" aria-label="Key name"><button class="icon-btn primary" data-tip="Generate key" aria-label="Generate key"><svg class="icon"><use href="#i-plus"/></svg></button></form>
-            <div id="newKeyBox" class="key-reveal" hidden><div><strong>Copy this key now — it will not be shown again.</strong><code id="newKeyValue"></code></div><button type="button" class="icon-btn" id="copyNewKey" data-tip="Copy key" aria-label="Copy key"><svg class="icon"><use href="#i-copy"/></svg></button></div>
             <div id="keysList"></div>
             <p class="muted" id="adminHint" hidden>Sign in with the admin key to create or revoke client keys.</p>
           </article>

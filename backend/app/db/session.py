@@ -22,18 +22,25 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         if "sqlite" in settings.DATABASE_URL:
-            columns = await conn.run_sync(
-                lambda sync_conn: {column["name"] for column in inspect(sync_conn).get_columns("jobs")}
-            )
+            # Columns added after a table first shipped (create_all never alters).
             additions = {
-                "source_headers": "JSON",
-                "acquisition_mode": "VARCHAR(32) DEFAULT 'server' NOT NULL",
-                "source_file_path": "TEXT",
-                "failure_code": "VARCHAR(64)",
+                "jobs": {
+                    "source_headers": "JSON",
+                    "acquisition_mode": "VARCHAR(32) DEFAULT 'server' NOT NULL",
+                    "source_file_path": "TEXT",
+                    "failure_code": "VARCHAR(64)",
+                },
+                "api_keys": {
+                    "key_encrypted": "TEXT",
+                },
             }
-            for name, sql_type in additions.items():
-                if name not in columns:
-                    await conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {name} {sql_type}"))
+            for table, table_additions in additions.items():
+                columns = await conn.run_sync(
+                    lambda sync_conn, table=table: {column["name"] for column in inspect(sync_conn).get_columns(table)}
+                )
+                for name, sql_type in table_additions.items():
+                    if name not in columns:
+                        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
 
 async def get_db():
     async with AsyncSessionLocal() as session:

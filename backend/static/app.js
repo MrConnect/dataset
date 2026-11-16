@@ -17,6 +17,7 @@ const KEY_STORAGE = "frameforge_api_key";
 const state = {
   dataset: [], jobs: [], health: null, role: null, keys: [], db: null,
   view: "overview", category: "all", jobFilter: "all", search: "", sort: "newest",
+  revealedKeys: {},
   selected: new Set(), anchorKey: null, focusedKey: null, limit: PAGE_SIZE,
   moveFiles: [], cutFiles: [], sourceJob: null, previewKey: null,
   confirmResolve: null, promptResolve: null,
@@ -339,9 +340,18 @@ function renderAdmin() {
   $("#dbPanel").hidden = !admin;
   $("#keyForm").hidden = !admin;
   $("#adminHint").hidden = admin;
-  if (!admin) { $("#keysList").innerHTML = ""; $("#newKeyBox").hidden = true; return; }
+  if (!admin) { $("#keysList").innerHTML = ""; state.revealedKeys = {}; return; }
   $("#keysList").innerHTML = state.keys.length
-    ? state.keys.map(key => `<div class="key-row" data-key-id="${escapeHtml(key.id)}">${icon("key")}<div><strong>${escapeHtml(key.name)}</strong><small>${escapeHtml(key.prefix)}… · created ${date(key.created_at)} · ${key.last_used_at ? `last used ${date(key.last_used_at)}` : "never used"}</small></div>${iconButton("trash", "Revoke key", "data-revoke-key", "small danger")}</div>`).join("")
+    ? state.keys.map(key => {
+        const shown = state.revealedKeys[key.id];
+        const value = shown
+          ? `<code class="key-value" title="Click to select">${escapeHtml(shown)}</code>`
+          : `<small>${escapeHtml(key.prefix)}•••••••• · created ${date(key.created_at)} · ${key.last_used_at ? `last used ${date(key.last_used_at)}` : "never used"}</small>`;
+        const reveal = key.revealable
+          ? iconButton(shown ? "eye-off" : "eye", shown ? "Hide key" : "Show key", "data-reveal-key", "small")
+          : `<span class="key-note" title="Created before keys could be shown again — create a new one if you need to see it">${icon("alert")}</span>`;
+        return `<div class="key-row ${shown ? "revealed" : ""}" data-key-id="${escapeHtml(key.id)}">${icon("key")}<div><strong>${escapeHtml(key.name)}</strong>${value}</div>${reveal}${shown ? iconButton("copy", "Copy key", "data-copy-key", "small") : ""}${iconButton("trash", "Revoke key", "data-revoke-key", "small danger")}</div>`;
+      }).join("")
     : empty("key", "No client keys yet", "Generate one and paste it into the extension settings.");
   const db = state.db;
   $("#dbSummary").textContent = db ? `${plural(db.jobs, "job")} · ${plural(db.segments, "segment")} · ${plural(db.categories, "label")}${db.size != null ? ` · ${bytes(db.size)}` : ""}` : "";
@@ -693,11 +703,26 @@ document.addEventListener("click", async event => {
   if (jobButton) { jobAction(jobButton.closest("tr").dataset.job, jobButton.dataset.jobAction); return; }
   const confirmation = target.closest("[data-confirm]");
   if (confirmation) { const ok = confirmation.dataset.confirm === "ok"; const resolve = state.confirmResolve; state.confirmResolve = null; $("#confirmModal").hidden = true; resolve?.(ok); return; }
+  const reveal = target.closest("[data-reveal-key]");
+  if (reveal) {
+    const id = reveal.closest("[data-key-id]").dataset.keyId;
+    if (state.revealedKeys[id]) { delete state.revealedKeys[id]; renderAdmin(); return; }
+    try { state.revealedKeys[id] = (await request(`/api/v1/keys/${encodeURIComponent(id)}/reveal`)).key; renderAdmin(); }
+    catch (error) { toast(error.message, "error"); }
+    return;
+  }
+  const copyKey = target.closest("[data-copy-key]");
+  if (copyKey) {
+    const id = copyKey.closest("[data-key-id]").dataset.keyId;
+    try { await navigator.clipboard.writeText(state.revealedKeys[id]); toast("Key copied"); }
+    catch { toast("Select the key and copy it manually", "error"); }
+    return;
+  }
   const revoke = target.closest("[data-revoke-key]");
   if (revoke) {
     const row = revoke.closest("[data-key-id]");
     if (!await confirmAction("Revoke this key?", "The extension using it will stop working immediately.")) return;
-    try { await request(`/api/v1/keys/${encodeURIComponent(row.dataset.keyId)}`, { method: "DELETE" }); $("#newKeyBox").hidden = true; await loadAdmin(); toast("Key revoked"); }
+    try { await request(`/api/v1/keys/${encodeURIComponent(row.dataset.keyId)}`, { method: "DELETE" }); delete state.revealedKeys[row.dataset.keyId]; await loadAdmin(); toast("Key revoked"); }
     catch (error) { toast(error.message, "error"); }
   }
 });
@@ -803,13 +828,12 @@ $("#keyForm").addEventListener("submit", async event => {
   if (!name) return;
   try {
     const created = await postJson("/api/v1/keys", { name });
-    $("#keyName").value = ""; await loadAdmin();
-    $("#newKeyValue").textContent = created.key; $("#newKeyBox").hidden = false;
+    $("#keyName").value = "";
+    state.revealedKeys[created.id] = created.key;
+    await loadAdmin();
+    try { await navigator.clipboard.writeText(created.key); toast("Key created and copied"); }
+    catch { toast("Key created"); }
   } catch (error) { toast(error.message, "error"); }
-});
-$("#copyNewKey").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText($("#newKeyValue").textContent); toast("Key copied"); }
-  catch { toast("Select the key and copy it manually", "error"); }
 });
 $("#dbDownload").addEventListener("click", downloadDatabase);
 $("#dbReset").addEventListener("click", resetDatabase);

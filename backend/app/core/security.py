@@ -13,6 +13,7 @@ session cookie that is issued only in exchange for a valid key. The cookie is
 never accepted on state-changing routes.
 """
 
+import base64
 import hashlib
 import hmac
 import logging
@@ -22,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import Cookie, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,6 +89,26 @@ def hash_key(value: str) -> str:
 
 def generate_client_key() -> str:
     return f"{CLIENT_KEY_PREFIX}{secrets.token_urlsafe(32)}"
+
+
+def _key_vault() -> Fernet:
+    digest = hashlib.sha256(b"vdt-client-key-vault:" + get_admin_key().encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def seal_client_key(plaintext: str) -> str:
+    """Encrypt a client key so the admin can show it again later."""
+    return _key_vault().encrypt(plaintext.encode("utf-8")).decode("ascii")
+
+
+def open_client_key(sealed: str | None) -> str | None:
+    """Decrypt a stored client key; None if it cannot be shown (old key or changed admin key)."""
+    if not sealed:
+        return None
+    try:
+        return _key_vault().decrypt(sealed.encode("ascii")).decode("utf-8")
+    except (InvalidToken, ValueError):
+        return None
 
 
 def _unauthorized() -> HTTPException:
