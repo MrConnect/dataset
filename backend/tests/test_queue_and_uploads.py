@@ -45,10 +45,21 @@ async def test_interrupted_jobs_are_requeued_and_claimed_in_order(client, auth_h
     first = (await client.post("/api/v1/jobs", json=payload(), headers=auth_headers)).json()["job_id"]
     second = (await client.post("/api/v1/jobs", json=payload(), headers=auth_headers)).json()["job_id"]
 
-    # Simulate a crash while the first job was mid-download.
+    # A job another process is actively running (fresh lease) is left alone.
     async with AsyncSessionLocal() as session:
         job = await session.get(Job, first)
         job.status = "downloading"
+        await session.commit()
+    assert await JobWorkerQueue.recover_interrupted_jobs() == 0
+    assert await _status(first) == "downloading"
+
+    # Once its lease expires (the process died), it is taken back.
+    from datetime import datetime, timedelta
+    from sqlalchemy import update as sql_update
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            sql_update(Job).where(Job.id == first).values(updated_at=datetime.utcnow() - timedelta(minutes=10))
+        )
         await session.commit()
 
     assert await JobWorkerQueue.recover_interrupted_jobs() == 1
@@ -220,3 +231,31 @@ async def test_library_video_is_cut_locally_without_download(client, auth_header
     assert await _status(job_id) == "completed"
     assert cut_from == [downloads / "movie.mp4"]
     assert (downloads / "movie.mp4").exists()  # the library file is never consumed
+
+
+@pytest.mark.asyncio
+async def test_source_shorter_than_segments_asks_for_the_right_video(client, auth_headers, storage, monkeypatch):
+    downloads = Path(settings.BASE_STORAGE_DIR) / "downloads"
+    downloads.mkdir(parents=True)
+    (downloads / "clip.mp4").write_bytes(b"c" * 8192)
+
+    body = payload(end_seconds=11.042, mode="auto")
+    body["source"]["media_url"] = "https://tagger.example.com/api/v1/dataset/file/_downloads/clip.mp4"
+    body["source"]["type"] = "mp4"
+    job_id = (await client.post("/api/v1/jobs", json=body, headers=auth_headers)).json()["job_id"]
+
+    async def probe(_path):
+        return 8.008
+
+    async def must_not_cut(**_kwargs):
+        raise AssertionError("no segment should be cut from the wrong video")
+
+    monkeypatch.setattr(VideoDownloader, "_probe_media", probe)
+    monkeypatch.setattr("app.workers.queue.VideoProcessor.extract_segment", must_not_cut)
+
+    await JobWorkerQueue._process_job(job_id)
+
+    details = (await client.get(f"/api/v1/jobs/{job_id}", headers=auth_headers)).json()
+    assert details["status"] == "awaiting_source"
+    assert details["failure_code"] == "SOURCE_INCOMPLETE"
+    assert "0:08 long" in details["error"] and "0:11" in details["error"]

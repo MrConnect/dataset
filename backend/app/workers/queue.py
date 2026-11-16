@@ -7,14 +7,20 @@ the process died are put back to ``queued`` on startup.
 
 The only in-memory state is a pair of sets used to signal jobs that are
 running *right now* in this process (cancel / purge).
+
+A running job holds a lease: its worker refreshes ``updated_at`` every few
+seconds. Only jobs whose lease has expired are taken back, so during a
+rolling redeploy (old and new container sharing one database) the new
+container never grabs a job the old one is still processing.
 """
 
 import asyncio
 import logging
 import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import select, true, update
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
@@ -35,8 +41,23 @@ class JobCancelled(Exception):
     """Raised inside the pipeline when the running job was cancelled or deleted."""
 
 
+def _utcnow() -> datetime:
+    # Stored timestamps are naive UTC.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _format_seconds(seconds: float) -> str:
+    total = int(round(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
 class JobWorkerQueue:
     POLL_INTERVAL_SECONDS = 5.0
+    HEARTBEAT_SECONDS = 20.0
+    LEASE_SECONDS = 120.0
+    RECOVERY_INTERVAL_SECONDS = 60.0
 
     _wake: asyncio.Event | None = None
     _cancelled_jobs: set[str] = set()
@@ -44,6 +65,7 @@ class JobWorkerQueue:
     _active_jobs: set[str] = set()
     _workers: list[asyncio.Task] = []
     _running: bool = False
+    _last_recovery: float = 0.0
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -69,15 +91,36 @@ class JobWorkerQueue:
 
     @classmethod
     async def recover_interrupted_jobs(cls) -> int:
-        """Put jobs that were running when the server stopped back in the queue."""
+        """Re-queue running jobs whose worker stopped refreshing its lease.
+
+        Covers a crash or restart without touching a job another live
+        process (e.g. the old container during a redeploy) is still running.
+        """
+        cutoff = _utcnow() - timedelta(seconds=cls.LEASE_SECONDS)
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 update(Job)
-                .where(Job.status.in_(ACTIVE_STATUSES))
-                .values(status="queued", progress=0)
+                .where(Job.status.in_(ACTIVE_STATUSES), Job.updated_at < cutoff)
+                .where(Job.id.not_in(list(cls._active_jobs)) if cls._active_jobs else true())
+                .values(status="queued", progress=0, updated_at=_utcnow())
             )
             await session.commit()
             return result.rowcount or 0
+
+    @classmethod
+    async def _heartbeat(cls, job_id: str) -> None:
+        while True:
+            await asyncio.sleep(cls.HEARTBEAT_SECONDS)
+            try:
+                async with AsyncSessionLocal() as session:
+                    await session.execute(
+                        update(Job)
+                        .where(Job.id == job_id, Job.status.in_(ACTIVE_STATUSES))
+                        .values(updated_at=_utcnow())
+                    )
+                    await session.commit()
+            except Exception:
+                logger.debug("Heartbeat for %s failed", job_id, exc_info=True)
 
     # --- signalling --------------------------------------------------------
 
@@ -132,7 +175,7 @@ class JobWorkerQueue:
                 claimed = await session.execute(
                     update(Job)
                     .where(Job.id == candidate, Job.status == "queued")
-                    .values(status="downloading", progress=0)
+                    .values(status="downloading", progress=0, updated_at=_utcnow())
                 )
                 await session.commit()
                 if claimed.rowcount == 1:
@@ -147,6 +190,12 @@ class JobWorkerQueue:
                 wake = cls._wake
                 if wake is not None:
                     wake.clear()
+                loop_time = asyncio.get_running_loop().time()
+                if worker_id == 0 and loop_time - cls._last_recovery > cls.RECOVERY_INTERVAL_SECONDS:
+                    cls._last_recovery = loop_time
+                    recovered = await cls.recover_interrupted_jobs()
+                    if recovered:
+                        logger.warning("Re-queued %d job(s) whose worker stopped", recovered)
                 job_id = await cls._claim_next_job()
                 if job_id is None:
                     if wake is None:
@@ -171,6 +220,7 @@ class JobWorkerQueue:
         source_path: Path | None = None
         source_should_persist = False
         cls._active_jobs.add(job_id)
+        heartbeat = asyncio.create_task(cls._heartbeat(job_id))
 
         def check_cancelled() -> None:
             if cls._is_cancelled(job_id):
@@ -204,6 +254,7 @@ class JobWorkerQueue:
                         progress=0 if failure.source_required else 100,
                     )
         finally:
+            heartbeat.cancel()
             purge = job_id in cls._purge_jobs
             cls._active_jobs.discard(job_id)
             cls._cancelled_jobs.discard(job_id)
@@ -324,6 +375,14 @@ class JobWorkerQueue:
                 raise failure from source_error
 
         check_cancelled()
+
+        if required_seconds is not None and probed_duration + 0.05 < required_seconds:
+            raise ValueError(
+                "Downloaded source is incomplete or mismatched: the video is "
+                f"{_format_seconds(probed_duration)} long but the segments go up to "
+                f"{_format_seconds(required_seconds)}. It is probably a different video "
+                "(an ad, a preview or another clip) than the one that was tagged."
+            )
 
         if settings.KEEP_DOWNLOADED_SOURCES and source_path and not source_should_persist:
             archived_source = settings.downloads_path / f"{job.id}_source{source_path.suffix or '.mp4'}"

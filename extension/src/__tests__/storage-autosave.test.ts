@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { StorageService, normalizeUrl, computeSmartDraftId } from '../services/storage';
+import { StorageService, normalizeUrl, computeSmartDraftId, isSameVideo } from '../services/storage';
 
 // Simple in-memory mock for localStorage in Node test environment
 const mockStorage: Record<string, string> = {};
@@ -66,5 +66,42 @@ describe('Smart Auto-Save & Recovery', () => {
     await StorageService.clearDraftForVideo(pageUrl, mediaUrl);
     const afterClear = await StorageService.findDraft(pageUrl, mediaUrl, 3600);
     expect(afterClear).toBeNull();
+  });
+});
+
+describe('Drafts never jump to another video', () => {
+  const page = 'https://dataset.example.com/dashboard/index.html#library';
+  const movie = 'https://dataset.example.com/api/v1/dataset/file/_downloads/movie.mp4';
+  const clip = 'https://dataset.example.com/api/v1/dataset/file/walking/clip.mp4';
+  const segments = [{ id: 'seg_1', start_seconds: 5, end_seconds: 11.042, categories: ['walking'] }];
+
+  beforeEach(() => {
+    (globalThis as any).localStorage.clear();
+  });
+
+  it('does not restore a draft before the video length is known', async () => {
+    await StorageService.saveDraft({ page_url: page, media_url: movie, duration: 60, segments });
+    expect(await StorageService.findDraft(page, movie, NaN)).toBeNull();
+    expect(await StorageService.findDraft(page, movie, undefined)).toBeNull();
+    expect(await StorageService.findDraft(page, movie, 60)).not.toBeNull();
+  });
+
+  it('does not give one video\'s draft to another video on the same page', async () => {
+    await StorageService.saveDraft({ page_url: page, media_url: movie, duration: 60, segments });
+    // The dashboard: same page, a different (8 s) clip.
+    expect(await StorageService.findDraft(page, clip, 8.008)).toBeNull();
+    // Same page, different file of the same length: still a different video.
+    expect(await StorageService.findDraft(page, clip, 60)).toBeNull();
+  });
+
+  it('rejects drafts whose segments do not fit the video', () => {
+    const draft = { page_url: page, media_url: undefined, duration: 8.2, segments };
+    expect(isSameVideo(draft, page, '', 'blob:x', 8.2)).toBe(false);
+  });
+
+  it('still matches blob players by page and length', () => {
+    const draft = { page_url: page, media_url: 'blob:https://site/1', duration: 1800, segments };
+    expect(isSameVideo(draft, page, '', 'blob:https://site/2', 1801)).toBe(true);
+    expect(isSameVideo(draft, page, '', 'blob:https://site/2', 1850)).toBe(false);
   });
 });

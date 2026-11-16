@@ -58,6 +58,30 @@ function hashString(str: string): string {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
+function isRealMediaUrl(url?: string): url is string {
+  return !!url && !url.startsWith('blob:') && !url.startsWith('data:');
+}
+
+/** Strict check that a draft belongs to the video now playing. */
+export function isSameVideo(
+  draft: Pick<AutoSaveDraft, 'page_url' | 'media_url' | 'duration' | 'segments'>,
+  pageUrl: string,
+  referrer: string,
+  mediaUrl: string | undefined,
+  duration: number
+): boolean {
+  if (!draft.duration || !Number.isFinite(draft.duration) || draft.duration <= 0) return false;
+  if (Math.abs(draft.duration - duration) > Math.max(1, duration * 0.005)) return false;
+  // Every saved segment must fit inside this video.
+  if (draft.segments.some((segment) => segment.end_seconds > duration + 0.05)) return false;
+
+  if (isRealMediaUrl(mediaUrl) && isRealMediaUrl(draft.media_url)) {
+    return normalizeUrl(mediaUrl) === normalizeUrl(draft.media_url);
+  }
+  const page = normalizeUrl(draft.page_url);
+  return page === normalizeUrl(pageUrl) || (!!referrer && page === normalizeUrl(referrer));
+}
+
 export function computeSmartDraftId(pageUrl: string, mediaUrl?: string): string {
   const normPage = normalizeUrl(pageUrl);
   let normMedia = '';
@@ -294,57 +318,56 @@ export const StorageService = {
     }
   },
 
+  /**
+   * Find the auto-saved draft for the video that is playing now.
+   *
+   * A draft is only returned when it is clearly the same video:
+   * - the video's length must be known and match the draft's length, and
+   * - the media addresses must match; the page address is only used when one
+   *   side has no real address (blob: players). Several videos on one page
+   *   (e.g. the dashboard) therefore never share a draft.
+   */
   async findDraft(
     pageUrl: string,
     mediaUrl?: string,
     duration?: number
   ): Promise<AutoSaveDraft | null> {
-    const candidateIds = new Set<string>();
+    if (!duration || !Number.isFinite(duration) || duration <= 0) return null;
 
+    const candidateIds = new Set<string>();
     candidateIds.add(computeSmartDraftId(pageUrl, mediaUrl));
     candidateIds.add(computeSmartDraftId(pageUrl));
-
     if (typeof document !== 'undefined' && document.referrer) {
       candidateIds.add(computeSmartDraftId(document.referrer, mediaUrl));
       candidateIds.add(computeSmartDraftId(document.referrer));
     }
+    const referrer = typeof document !== 'undefined' ? document.referrer : '';
+    const matches = (draft: AutoSaveDraft | undefined | null): draft is AutoSaveDraft =>
+      !!draft &&
+      Array.isArray(draft.segments) &&
+      draft.segments.length > 0 &&
+      Date.now() - draft.updated_at <= DRAFT_EXPIRY_MS &&
+      isSameVideo(draft, pageUrl, referrer, mediaUrl, duration);
 
-    // 1. Try chrome.storage.local first
+    // 1. chrome.storage.local (primary)
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       try {
         const keysToFetch = Array.from(candidateIds).map((id) => `${DRAFT_PREFIX}${id}`);
         const res = await chrome.storage.local.get(keysToFetch);
         for (const fullKey of keysToFetch) {
           const draft = res[fullKey] as AutoSaveDraft | undefined;
-          if (draft && draft.segments && draft.segments.length > 0) {
-            if (this.isDurationCompatible(draft.duration, duration)) {
-              return draft;
-            }
-          }
+          if (matches(draft)) return draft;
         }
 
-        // If direct match failed, scan through recent drafts in index
+        // Direct ids missed (e.g. tokens in the URL changed): scan recent drafts.
         const indexRes = await chrome.storage.local.get(DRAFT_INDEX_KEY);
         const index: string[] = Array.isArray(indexRes[DRAFT_INDEX_KEY]) ? indexRes[DRAFT_INDEX_KEY] : [];
         if (index.length > 0) {
           const allDraftKeys = index.map((id) => `${DRAFT_PREFIX}${id}`);
           const allRes = await chrome.storage.local.get(allDraftKeys);
-          const normCurrentPage = normalizeUrl(pageUrl);
-          const normReferrer = typeof document !== 'undefined' && document.referrer ? normalizeUrl(document.referrer) : '';
-
           for (const key of allDraftKeys) {
             const draft = allRes[key] as AutoSaveDraft | undefined;
-            if (!draft || !draft.segments || draft.segments.length === 0) continue;
-
-            if (Date.now() - draft.updated_at > DRAFT_EXPIRY_MS) continue;
-
-            const normDraftPage = normalizeUrl(draft.page_url);
-            const isPageMatch = normDraftPage === normCurrentPage || (normReferrer && normDraftPage === normReferrer);
-            const isMediaMatch = mediaUrl && draft.media_url && !mediaUrl.startsWith('blob:') && draft.media_url === mediaUrl;
-
-            if ((isPageMatch || isMediaMatch) && this.isDurationCompatible(draft.duration, duration)) {
-              return draft;
-            }
+            if (matches(draft)) return draft;
           }
         }
       } catch (err) {
@@ -352,19 +375,13 @@ export const StorageService = {
       }
     }
 
-    // 2. Fallback to localStorage
+    // 2. localStorage fallback
     if (typeof localStorage !== 'undefined') {
       try {
         for (const id of candidateIds) {
           const item = localStorage.getItem(`${DRAFT_PREFIX}${id}`);
-          if (item) {
-            const draft = JSON.parse(item) as AutoSaveDraft;
-            if (draft && draft.segments && draft.segments.length > 0) {
-              if (this.isDurationCompatible(draft.duration, duration)) {
-                return draft;
-              }
-            }
-          }
+          const draft = item ? (JSON.parse(item) as AutoSaveDraft) : null;
+          if (matches(draft)) return draft;
         }
       } catch {}
     }

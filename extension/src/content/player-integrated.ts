@@ -10,7 +10,7 @@ import { formatTime } from '../utils/time';
 import { clampTime, findOverlaps, rangeError, roundTime, segmentAt, sortSegments } from './segment-ops';
 import { SegmentEdge } from './player-drawer';
 import { showOverlayToast } from './overlay-toast';
-import { StorageService } from '../services/storage';
+import { StorageService, normalizeUrl } from '../services/storage';
 
 const PALETTE = ['#22c55e', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316', '#06b6d4'];
 
@@ -25,7 +25,9 @@ export class PlayerIntegratedController {
 
   private activeSource: DetectedSource | null = null;
   private sourceCandidates: Map<string, DetectedSource> = new Map();
-  private readonly handleLoadedMetadata = () => this.selectBestSource();
+  private readonly handleLoadedMetadata = () => this.handleVideoLoaded();
+  /** Which video the current segments belong to (address + length). */
+  private videoIdentity: string | null = null;
   private categories: Category[] = [];
   private segments: Segment[] = [];
   private selectedCategoryId: string = 'person_walking';
@@ -326,6 +328,7 @@ export class PlayerIntegratedController {
 
   private commit(next: Segment[], undoLabel?: string, coalesceKey?: string): void {
     if (undoLabel) this.pushUndo(undoLabel, coalesceKey);
+    if (!this.videoIdentity) this.videoIdentity = this.currentVideoIdentity();
     this.segments = sortSegments(next);
     if (this.editingSegmentId && !this.segments.some((s) => s.id === this.editingSegmentId)) {
       this.editingSegmentId = null;
@@ -374,6 +377,45 @@ export class PlayerIntegratedController {
 
   private toastParent(): HTMLElement {
     return (document.fullscreenElement as HTMLElement) || this.playerParent;
+  }
+
+  private currentVideoIdentity(): string | null {
+    const duration = this.videoEl.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return null;
+    const src = this.videoEl.currentSrc || this.videoEl.src || '';
+    const address = src && !src.startsWith('blob:') ? normalizeUrl(src) : 'blob';
+    return `${address}|${Math.round(duration * 10)}`;
+  }
+
+  /**
+   * A different video was loaded into the same player (next episode, the
+   * dashboard's previous/next, a site's autoplay). Segments belong to the
+   * video they were tagged on, so they are set aside (they stay in that
+   * video's auto-saved draft) and the new video's own draft is loaded.
+   */
+  private handleVideoLoaded(): void {
+    const identity = this.currentVideoIdentity();
+    if (identity && this.videoIdentity && identity !== this.videoIdentity) {
+      if (this.autoSaveTimer) {
+        clearTimeout(this.autoSaveTimer);
+        this.autoSaveTimer = null;
+      }
+      const hadSegments = this.segments.length > 0;
+      this.stopSegmentPlayback();
+      this.segments = [];
+      this.undoStack = [];
+      this.editingSegmentId = null;
+      this.startMarker = null;
+      this.endMarker = null;
+      this.hasRestoredDraft = false;
+      this.activeSource = null;
+      this.playerParent.querySelector('.vdt-restore-toast')?.remove();
+      this.syncComponents();
+      if (hadSegments) this.toast('New video loaded — the previous video’s segments are kept in its own draft');
+    }
+    if (identity) this.videoIdentity = identity;
+    this.selectBestSource();
+    if (this.segments.length === 0) void this.restoreDraftIfNeeded();
   }
 
   private get duration(): number | undefined {
@@ -631,6 +673,19 @@ export class PlayerIntegratedController {
       return;
     }
 
+    const videoLength = this.videoEl.duration;
+    if (Number.isFinite(videoLength) && videoLength > 0) {
+      const index = this.segments.findIndex((s) => s.end_seconds > videoLength + 0.05);
+      if (index >= 0) {
+        this.toast(
+          `Segment ${index + 1} ends at ${formatTime(this.segments[index].end_seconds)}, but this video is only ${formatTime(videoLength)} long. Fix or delete it before sending.`,
+          'error'
+        );
+        this.selectSegment(this.segments[index].id, false);
+        return;
+      }
+    }
+
     if (this.activeSource && !this.sourceMatchesPlayerTimeline(this.activeSource)) {
       this.toast('The detected stream does not match this video’s length. Reload and wait for detection so times are not shifted.', 'error');
       return;
@@ -700,13 +755,16 @@ export class PlayerIntegratedController {
 
   private async restoreDraftIfNeeded(): Promise<void> {
     if (this.hasRestoredDraft || this.segments.length > 0) return;
+    // Without the video's length there is no safe way to tell which draft is its own.
+    if (!Number.isFinite(this.videoEl.duration) || this.videoEl.duration <= 0) return;
     try {
       const draft = await StorageService.findDraft(
         window.location.href,
         this.activeSource?.media_url || this.videoEl.currentSrc,
         this.videoEl.duration
       );
-      if (draft && draft.segments && draft.segments.length > 0) {
+      if (draft && draft.segments && draft.segments.length > 0 && this.segments.length === 0) {
+        this.videoIdentity = this.currentVideoIdentity();
         this.segments = sortSegments(draft.segments);
         if (draft.selectedCategoryId) {
           this.selectedCategoryId = draft.selectedCategoryId;
