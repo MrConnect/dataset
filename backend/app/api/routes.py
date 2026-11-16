@@ -9,7 +9,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core.security import verify_api_key
+from app.core.security import Principal, verify_api_key
 from app.db.session import get_db
 from app.models.job import CategoryModel, Job, JobSegment
 from app.schemas.category import CategorySchema
@@ -20,11 +20,21 @@ from app.schemas.job import (
     SegmentResult,
 )
 from app.schemas.source import SourceResolveRequest, SourceResolveResponse
+from app.services.source_intake import SourceRejected, attach_source_to_job, ensure_job_accepts_source, video_suffix
 from app.services.source_resolver import BackendSourceResolver
 from app.services.storage_manager import StorageManager
 from app.workers.queue import JobWorkerQueue
 
 router = APIRouter(prefix="/api/v1")
+
+
+async def _dispatch(job_id: str) -> None:
+    """Hand a job that was just committed as 'queued' to the workers."""
+    if settings.CELERY_ENABLED:
+        from app.workers.celery_worker import process_video_job
+        process_video_job.delay(job_id)
+    else:
+        await JobWorkerQueue.enqueue_job(job_id)
 
 
 def _job_response(job: Job, segments: list[JobSegment]) -> JobDetailResponse:
@@ -89,7 +99,7 @@ async def health_check():
 @router.post("/sources/resolve", response_model=SourceResolveResponse)
 async def resolve_source(
     req: SourceResolveRequest,
-    _auth: Annotated[str, Depends(verify_api_key)],
+    _auth: Annotated[Principal, Depends(verify_api_key)],
 ):
     """
     Validates source URL against SSRF policy and probes streams/qualities.
@@ -115,7 +125,7 @@ async def resolve_source(
 )
 async def submit_job(
     payload: JobPayload,
-    _auth: Annotated[str, Depends(verify_api_key)],
+    _auth: Annotated[Principal, Depends(verify_api_key)],
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -195,12 +205,7 @@ async def submit_job(
             detail="Job database is temporarily unavailable. Please retry after checking server storage.",
         ) from exc
 
-    # Enqueue to background worker
-    if settings.CELERY_ENABLED:
-        from app.workers.celery_worker import process_video_job
-        process_video_job.delay(job_id)
-    else:
-        await JobWorkerQueue.enqueue_job(job_id)
+    await _dispatch(job_id)
 
     return JobSubmitResponse(
         job_id=job_id,
@@ -213,7 +218,7 @@ async def submit_job(
 @router.get("/jobs/{job_id}", response_model=JobDetailResponse)
 async def get_job(
     job_id: str,
-    _auth: Annotated[str, Depends(verify_api_key)],
+    _auth: Annotated[Principal, Depends(verify_api_key)],
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -231,7 +236,7 @@ async def get_job(
 
 @router.get("/jobs", response_model=list[JobDetailResponse])
 async def list_jobs(
-    _auth: Annotated[str, Depends(verify_api_key)],
+    _auth: Annotated[Principal, Depends(verify_api_key)],
     db: AsyncSession = Depends(get_db),
     status_filter: str | None = Query(None, alias="status"),
     limit: int = Query(20, ge=1, le=100),
@@ -247,67 +252,52 @@ async def list_jobs(
     res = await db.execute(query)
     jobs = res.scalars().all()
 
-    results: list[JobDetailResponse] = []
-    for job in jobs:
-        seg_res = await db.execute(select(JobSegment).where(JobSegment.job_id == job.id))
-        segments = seg_res.scalars().all()
-        results.append(_job_response(job, list(segments)))
-    return results
+    # Segments are eager-loaded with the jobs (selectin), so no per-job query.
+    return [_job_response(job, list(job.segments)) for job in jobs]
 
 
 @router.post("/jobs/{job_id}/source", status_code=status.HTTP_202_ACCEPTED)
 async def upload_job_source(
     job_id: str,
-    _auth: Annotated[str, Depends(verify_api_key)],
+    _auth: Annotated[Principal, Depends(verify_api_key)],
     db: AsyncSession = Depends(get_db),
     file: UploadFile = File(...),
 ):
+    """Single-request source upload.
+
+    Kept for small files and API clients. Browsers should use the resumable
+    ``/api/v1/uploads`` flow, which survives proxies and dropped connections.
+    """
     job = await db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    if job.status in ("completed", "processing"):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Job is already {job.status}")
 
-    suffix = Path(file.filename or "source.mp4").suffix.lower()
-    if suffix not in {".mp4", ".mkv", ".mov", ".webm", ".ts", ".m4v"}:
-        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported video file type")
-
-    for previous in settings.temp_path.glob(f"{job_id}_uploaded_source.*"):
-        previous.unlink(missing_ok=True)
-    destination = settings.temp_path / f"{job_id}_uploaded_source{suffix}"
-    total = 0
+    staged = settings.uploads_path / f"direct_{job_id}_{uuid.uuid4().hex[:8]}.part"
     try:
-        with destination.open("wb") as output:
+        ensure_job_accepts_source(job)
+        suffix = video_suffix(file.filename or "source.mp4")
+        total = 0
+        with staged.open("wb") as output:
             while chunk := await file.read(1024 * 1024):
                 total += len(chunk)
                 if total > settings.MAX_DOWNLOAD_SIZE_BYTES:
-                    raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Uploaded source is too large")
+                    raise SourceRejected("Uploaded source is too large", status_code=413)
                 output.write(chunk)
-    except Exception:
-        destination.unlink(missing_ok=True)
-        raise
+        result = await attach_source_to_job(db, job, staged, suffix)
+    except SourceRejected as rejected:
+        raise HTTPException(status_code=rejected.status_code, detail=rejected.detail) from rejected
     finally:
+        staged.unlink(missing_ok=True)
         await file.close()
 
-    job.source_file_path = str(destination)
-    job.acquisition_mode = "upload"
-    job.status = "queued"
-    job.progress = 0
-    job.error = None
-    job.failure_code = None
-    await db.commit()
-    if settings.CELERY_ENABLED:
-        from app.workers.celery_worker import process_video_job
-        process_video_job.delay(job.id)
-    else:
-        await JobWorkerQueue.enqueue_job(job.id)
-    return {"job_id": job.id, "status": "queued", "message": "Source uploaded; processing resumed"}
+    await _dispatch(job.id)
+    return result
 
 
 @router.delete("/jobs/{job_id}")
 async def delete_job(
     job_id: str,
-    _auth: Annotated[str, Depends(verify_api_key)],
+    _auth: Annotated[Principal, Depends(verify_api_key)],
     db: AsyncSession = Depends(get_db),
 ):
     job = await db.get(Job, job_id)
@@ -326,7 +316,7 @@ async def delete_job(
 @router.post("/jobs/{job_id}/cancel")
 async def cancel_job(
     job_id: str,
-    _auth: Annotated[str, Depends(verify_api_key)],
+    _auth: Annotated[Principal, Depends(verify_api_key)],
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -336,19 +326,18 @@ async def cancel_job(
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    if job.status in ("completed", "failed", "cancelled"):
+    if job.status in ("completed", "partially_completed", "failed", "cancelled"):
         return {"job_id": job.id, "status": job.status, "message": f"Job is already {job.status}"}
 
+    JobWorkerQueue.cancel_job(job_id)
     job.status = "cancelled"
     await db.commit()
-
-    JobWorkerQueue.cancel_job(job_id)
     return {"job_id": job.id, "status": "cancelled", "message": "Job cancelled successfully"}
 
 
 @router.get("/categories", response_model=list[CategorySchema])
 async def list_categories(
-    _auth: Annotated[str, Depends(verify_api_key)],
+    _auth: Annotated[Principal, Depends(verify_api_key)],
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -371,7 +360,7 @@ async def list_categories(
 @router.post("/categories/sync", response_model=list[CategorySchema])
 async def sync_categories(
     payload: list[CategorySchema],
-    _auth: Annotated[str, Depends(verify_api_key)],
+    _auth: Annotated[Principal, Depends(verify_api_key)],
     db: AsyncSession = Depends(get_db),
 ):
     """Merge browser categories into the shared server category registry."""
@@ -401,7 +390,7 @@ async def sync_categories(
 @router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_category(
     category_id: str,
-    _auth: Annotated[str, Depends(verify_api_key)],
+    _auth: Annotated[Principal, Depends(verify_api_key)],
     db: AsyncSession = Depends(get_db),
 ):
     """Remove a label from the shared registry without deleting produced clips."""
@@ -410,26 +399,3 @@ async def delete_category(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     await db.delete(category)
     await db.commit()
-@router.get("/debug_error")
-async def get_last_error():
-    from app.db.models import Job, Segment
-    from sqlalchemy import select
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Job).where(Job.status == 'failed').order_by(Job.created_at.desc())
-        )
-        job = result.scalars().first()
-        if not job:
-            return {"error": "No failed jobs found."}
-        
-        seg_res = await session.execute(
-            select(Segment).where(Segment.job_id == job.id, Segment.status == 'failed')
-        )
-        segments = seg_res.scalars().all()
-        seg_errors = {seg.segment_id: seg.error for seg in segments}
-
-        return {
-            "job_id": job.id,
-            "job_error": job.error,
-            "segment_errors": seg_errors
-        }

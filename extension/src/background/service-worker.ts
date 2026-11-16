@@ -105,8 +105,8 @@ chrome.runtime.onInstalled.addListener(() => {
     return true;
   }
 
-  // Relay video playback state
-  if (message.type === 'DOM_VIDEOS_FOUND' || message.type === 'VIDEO_TIME_UPDATE') {
+  // Relay video playback state & segment updates
+  if (message.type === 'DOM_VIDEOS_FOUND' || message.type === 'VIDEO_TIME_UPDATE' || message.type === 'OVERLAY_SEGMENTS_UPDATED') {
     chrome.runtime.sendMessage(message).catch(() => {});
     sendResponse({ ok: true });
     return false;

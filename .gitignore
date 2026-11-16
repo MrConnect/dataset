@@ -26,3 +26,6 @@ extension/dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime storage (thumbnails, uploads, generated admin key)
+backend/storage/

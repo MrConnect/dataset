@@ -14,6 +14,10 @@ def classify_download_error(error: Exception) -> DownloadFailure:
     message = str(error)
     lowered = message.lower()
 
+    if "is not installed on the server" in lowered:
+        # A missing ffmpeg/ffprobe is the server's problem; asking the user
+        # for another source would send them in the wrong direction.
+        return DownloadFailure("SERVER_TOOL_MISSING", "The server cannot process video: ffmpeg/ffprobe is not installed.")
     if re.search(r"\b(401|403)\b", message) or "forbidden" in lowered or "access denied" in lowered:
         return DownloadFailure(
             "SOURCE_ACCESS_DENIED",

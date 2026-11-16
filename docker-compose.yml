@@ -8,7 +8,7 @@ services:
     expose:
       - "8000"
     environment:
-      - API_KEY=${API_KEY:-test_dev_key}
+      - API_KEY=${API_KEY:-}
       - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:////app/storage/tagger.db}
       - DATASET_DIR=/app/dataset
       - BASE_STORAGE_DIR=/app/storage

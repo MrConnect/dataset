@@ -1,16 +1,55 @@
 import React, { useEffect, useState } from 'react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  CircleX,
+  Clock,
+  Copy,
+  Download,
+  FileDown,
+  FileUp,
+  Loader2,
+  RefreshCw,
+  Trash2,
+  Upload,
+  type LucideIcon,
+} from 'lucide-react';
 import { JobResponse, JobStatus } from '../../types';
 import { ApiClient } from '../../services/api-client';
+import { ConfirmButton, IconButton, IconFileButton, useNotify } from './ui';
 
 interface JobStatusViewProps {
   lastSubmittedJobId?: string | null;
 }
 
+const STATUS: Record<string, { label: string; icon: LucideIcon; tone: string; spin?: boolean }> = {
+  queued: { label: 'Queued', icon: Clock, tone: 'info' },
+  downloading: { label: 'Downloading', icon: Download, tone: 'info' },
+  processing: { label: 'Processing', icon: Loader2, tone: 'info', spin: true },
+  completed: { label: 'Completed', icon: CheckCircle2, tone: 'ok' },
+  partially_completed: { label: 'Partly done', icon: AlertTriangle, tone: 'warn' },
+  awaiting_source: { label: 'Needs source', icon: Upload, tone: 'warn' },
+  failed: { label: 'Failed', icon: CircleX, tone: 'bad' },
+  cancelled: { label: 'Cancelled', icon: CircleX, tone: 'muted' },
+};
+
+const FINISHED: JobStatus[] = ['completed', 'partially_completed', 'failed', 'cancelled'];
+
+function sourceName(job: JobResponse): string {
+  try {
+    return new URL(job.page_url || job.media_url || '').hostname.replace(/^www\./, '');
+  } catch {
+    return job.job_id;
+  }
+}
+
 export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId }) => {
+  const notify = useNotify();
   const [jobs, setJobs] = useState<JobResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadingJob, setUploadingJob] = useState<string | null>(null);
+  const [upload, setUpload] = useState<{ percent: number; text: string }>({ percent: 0, text: '' });
   const [deletingJob, setDeletingJob] = useState<string | null>(null);
 
   const fetchJobs = async (showLoading = true) => {
@@ -40,193 +79,184 @@ export const JobStatusView: React.FC<JobStatusViewProps> = ({ lastSubmittedJobId
   const handleCancelJob = async (jobId: string) => {
     try {
       await ApiClient.cancelJob(jobId);
-      fetchJobs();
+      notify('Job cancelled');
+      void fetchJobs(false);
     } catch (err: any) {
-      alert(`Error canceling job: ${err.message}`);
+      notify(`Could not cancel: ${err.message}`, 'error');
     }
   };
 
   const handleUndoJob = async (jobId: string) => {
-    if (!confirm('Undo this job completely? This cancels any active processing and permanently deletes its downloaded source, generated clips, temporary files, metadata, and job record.')) return;
     setDeletingJob(jobId);
     try {
       const result = await ApiClient.deleteJob(jobId);
-      await fetchJobs();
+      await fetchJobs(false);
       const megabytes = (result.deleted_bytes / (1024 * 1024)).toFixed(1);
-      alert(`Job undone. Deleted ${result.deleted_files} files (${megabytes} MB).`);
+      notify(`Job removed — ${result.deleted_files} files (${megabytes} MB) deleted`);
     } catch (err: any) {
-      alert(`Error undoing job: ${err.message}`);
+      notify(`Could not delete: ${err.message}`, 'error');
     } finally {
       setDeletingJob(null);
     }
   };
 
-  const handleSourceUpload = async (jobId: string, file?: File) => {
-    if (!file) return;
+  const handleSourceUpload = async (jobId: string, file: File) => {
     setUploadingJob(jobId);
+    setUpload({ percent: 0, text: 'Starting upload…' });
     try {
-      await ApiClient.uploadJobSource(jobId, file);
-      await fetchJobs();
+      const result = await ApiClient.uploadJobSource(jobId, file, (sent, total, verifying) => {
+        const percent = Math.floor((sent / total) * 100);
+        setUpload({
+          percent,
+          text: verifying
+            ? 'Verifying video on server…'
+            : `${percent}% · ${(sent / 1048576).toFixed(0)} / ${(total / 1048576).toFixed(0)} MB`,
+        });
+      });
+      await fetchJobs(false);
+      notify(result.warning || 'Source verified — job resumed', result.warning ? 'error' : 'ok');
     } catch (err: any) {
-      alert(`Source upload failed: ${err.message}`);
+      notify(`Upload failed: ${err.message}`, 'error');
     } finally {
       setUploadingJob(null);
     }
   };
 
-  const getStatusColor = (status: JobStatus) => {
-    switch (status) {
-      case 'completed': return 'var(--accent-green)';
-      case 'failed': return 'var(--accent-red)';
-      case 'cancelled': return '#64748b';
-      case 'awaiting_source': return 'var(--accent-amber)';
-      case 'downloading':
-      case 'processing': return '#38bdf8';
-      default: return 'var(--accent-amber)';
+  const handleExport = (job: JobResponse) => {
+    if (!job.segments?.length) {
+      notify('This job has no segments to export', 'error');
+      return;
     }
+    const exportData = job.segments.map((s) => ({ start_seconds: s.start_seconds, end_seconds: s.end_seconds, categories: s.categories }));
+    const url = URL.createObjectURL(new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${job.job_id}_export.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const handleImportJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const handleImportJson = (file: File) => {
     const reader = new FileReader();
-    reader.onload = async (ev) => {
+    reader.onload = (ev) => {
       try {
-        const text = ev.target?.result as string;
-        const segments = JSON.parse(text);
-        if (!Array.isArray(segments)) throw new Error("JSON must be an array of segments");
-        
-        // Ask background script to grab the active tab's source and submit a job
+        const segments = JSON.parse(ev.target?.result as string);
+        if (!Array.isArray(segments)) throw new Error('JSON must be an array of segments');
+
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
           const activeTab = tabs[0];
-          if (activeTab && activeTab.id) {
-            chrome.tabs.sendMessage(activeTab.id, {
-              type: 'IMPORT_JOB_JSON',
-              payload: { segments }
-            }, (response) => {
-              if (chrome.runtime.lastError || !response?.ok) {
-                alert("Failed to load imported segments. Make sure a video is currently open and detected in the active tab.");
-              } else {
-                alert("Segments imported successfully! They now appear on the video timeline. You can adjust them and submit when ready.");
-              }
-            });
+          if (!activeTab?.id) {
+            notify('No active tab to import into', 'error');
+            return;
           }
+          chrome.tabs.sendMessage(activeTab.id, { type: 'IMPORT_JOB_JSON', payload: { segments } }, (response) => {
+            if (chrome.runtime.lastError || !response?.ok) {
+              notify('Open a page with a detected video first, then import again', 'error');
+            } else {
+              notify(`${segments.length} segments added to the video timeline`);
+            }
+          });
         });
       } catch (err: any) {
-        alert(`Failed to parse JSON: ${err.message}`);
+        notify(`Invalid JSON: ${err.message}`, 'error');
       }
-      e.target.value = ''; // reset
     };
     reader.readAsText(file);
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      <div className="card">
-        <div className="card-title">
-          <span>Backend Processing Jobs</span>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0, background: 'var(--bg-hover)' }}>
-              Import JSON
-              <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportJson} />
-            </label>
-            <button className="btn btn-secondary btn-sm" onClick={() => void fetchJobs()} disabled={loading}>
-              <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-            </button>
-          </div>
+    <div className="stack">
+      <div className="section-head">
+        <span className="section-title">Processing jobs</span>
+        <div className="row">
+          <IconFileButton icon={FileUp} label="Import segments from JSON into the open video" accept=".json" onFile={handleImportJson} />
+          <IconButton icon={RefreshCw} label="Refresh" spinning={loading} disabled={loading} onClick={() => void fetchJobs()} />
         </div>
-
-        {error && (
-          <div style={{ color: 'var(--accent-red)', fontSize: '11px', marginBottom: '8px' }}>
-            {error}
-          </div>
-        )}
-
-        {jobs.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#64748b', fontSize: '11px', padding: '16px' }}>
-            No processing jobs found yet.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {jobs.map((job) => {
-              const isFinished = job.status === 'completed' || job.status === 'partially_completed' || job.status === 'failed' || job.status === 'cancelled';
-              const needsSource = job.status === 'awaiting_source' || job.source_required;
-              return (
-                <div key={job.job_id} style={{ padding: '6px 8px', backgroundColor: 'var(--bg-primary)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span style={{ fontWeight: 600, fontSize: '11px', color: '#38bdf8', cursor: 'pointer' }} title="Copy ID" onClick={() => { navigator.clipboard.writeText(job.job_id); alert('Copied Job ID: ' + job.job_id); }}>
-                        {job.job_id.substring(0, 8)}...
-                      </span>
-                    </div>
-                    <span style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', color: getStatusColor(job.status) }}>
-                      {job.status} {!isFinished && job.progress !== undefined && `(${job.progress}%)`}
-                    </span>
-                  </div>
-
-                  {job.progress !== undefined && !isFinished && (
-                    <div style={{ width: '100%', height: '4px', background: '#334155', borderRadius: '2px', margin: '4px 0', overflow: 'hidden' }}>
-                      <div style={{ width: `${job.progress}%`, height: '100%', background: '#3b82f6', transition: 'width 0.3s' }} />
-                    </div>
-                  )}
-
-                  {job.error && (
-                    <div style={{ color: needsSource ? 'var(--accent-amber)' : 'var(--accent-red)', fontSize: '10px', marginTop: '2px', wordBreak: 'break-word' }}>
-                      {needsSource ? 'Action required' : 'Error'}: {job.error}
-                    </div>
-                  )}
-
-                  {needsSource && (
-                    <label className="btn btn-primary btn-sm" style={{ marginTop: '7px', cursor: 'pointer', width: '100%', boxSizing: 'border-box' }}>
-                      {uploadingJob === job.job_id ? 'Uploading source…' : 'Upload source and resume'}
-                      <input
-                        type="file"
-                        accept="video/*,.mkv,.ts"
-                        disabled={uploadingJob === job.job_id}
-                        style={{ display: 'none' }}
-                        onChange={(event) => {
-                          void handleSourceUpload(job.job_id, event.target.files?.[0]);
-                          event.target.value = '';
-                        }}
-                      />
-                    </label>
-                  )}
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                    <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
-                      {job.segments_count} cuts
-                    </div>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px' }} onClick={() => {
-                        if (job.segments && job.segments.length > 0) {
-                          const exportData = job.segments.map((s) => ({ start_seconds: s.start_seconds, end_seconds: s.end_seconds, categories: s.categories }));
-                          const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a'); a.href = url; a.download = `${job.job_id}_export.json`; a.click(); URL.revokeObjectURL(url);
-                        } else alert('No segments found for this job.');
-                      }}>
-                        Export
-                      </button>
-                      {!isFinished && (
-                        <button className="btn btn-secondary btn-sm" style={{ padding: '2px 6px', fontSize: '10px' }} onClick={() => handleCancelJob(job.job_id)}>Cancel</button>
-                      )}
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        style={{ padding: '2px 6px', fontSize: '10px', color: 'var(--accent-red)' }}
-                        disabled={deletingJob === job.job_id}
-                        onClick={() => void handleUndoJob(job.job_id)}
-                      >
-                        {deletingJob === job.job_id ? 'Undoing…' : 'Undo job'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
+
+      {error && (
+        <div className="banner bad">
+          <AlertTriangle size={14} aria-hidden />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {jobs.length === 0 && !error ? (
+        <div className="empty-state">
+          <Clock size={26} aria-hidden />
+          <strong>No jobs yet</strong>
+          <span>Tag segments on a video and send them to the server.</span>
+        </div>
+      ) : (
+        jobs.map((job) => {
+          const status = STATUS[job.status] || { label: job.status, icon: Clock, tone: 'muted' };
+          const StatusIcon = status.icon;
+          const isFinished = FINISHED.includes(job.status);
+          const needsSource = job.status === 'awaiting_source' || job.source_required;
+          const isRunning = ['queued', 'downloading', 'processing'].includes(job.status);
+          const isUploading = uploadingJob === job.job_id;
+          const progress = isUploading ? upload.percent : job.progress ?? 0;
+
+          return (
+            <article key={job.job_id} className={`job-card tone-${status.tone}`}>
+              <div className="job-top">
+                <div className="job-title">
+                  <strong title={job.page_url || job.job_id}>{sourceName(job)}</strong>
+                  <small>
+                    {job.segments_count} {job.segments_count === 1 ? 'segment' : 'segments'} · {job.job_id.slice(-6)}
+                  </small>
+                </div>
+                <span className={`status-pill tone-${status.tone}`}>
+                  <StatusIcon size={12} className={status.spin ? 'spin' : undefined} aria-hidden />
+                  {status.label}
+                </span>
+              </div>
+
+              {(isRunning || isUploading) && (
+                <div className="progress-track" title={`${progress}%`}>
+                  <div style={{ width: `${progress}%` }} />
+                </div>
+              )}
+
+              {isUploading && <div className="job-message info">{upload.text}</div>}
+              {!isUploading && job.error && (
+                <div className={`job-message ${needsSource ? 'warn' : 'bad'}`}>{job.error}</div>
+              )}
+
+              <div className="job-actions">
+                {needsSource && (
+                  <IconFileButton
+                    icon={Upload}
+                    label="Upload the source video and resume this job"
+                    accept="video/*,.mkv,.ts,.m4v"
+                    variant="primary"
+                    disabled={isUploading}
+                    onFile={(file) => void handleSourceUpload(job.job_id, file)}
+                  />
+                )}
+                <span className="spacer" />
+                <IconButton
+                  icon={Copy}
+                  label="Copy job ID"
+                  variant="ghost"
+                  onClick={() => navigator.clipboard.writeText(job.job_id).then(() => notify('Job ID copied'))}
+                />
+                <IconButton icon={FileDown} label="Export segments as JSON" variant="ghost" onClick={() => handleExport(job)} />
+                {!isFinished && (
+                  <IconButton icon={CircleX} label="Cancel job" variant="ghost" onClick={() => void handleCancelJob(job.job_id)} />
+                )}
+                <ConfirmButton
+                  icon={Trash2}
+                  label="Delete job, its source and its clips"
+                  confirmLabel="Click again to delete permanently"
+                  disabled={deletingJob === job.job_id}
+                  onConfirm={() => void handleUndoJob(job.job_id)}
+                />
+              </div>
+            </article>
+          );
+        })
+      )}
     </div>
   );
 };

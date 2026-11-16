@@ -63,3 +63,21 @@ class CategoryModel(Base):
     color: Mapped[str] = mapped_column(String(32), nullable=False, default="#3b82f6")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     shortcut: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+
+class ApiKey(Base):
+    """A revocable client key (for example one per browser extension).
+
+    Only the SHA-256 digest is stored; the plaintext is shown once at creation.
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

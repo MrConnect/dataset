@@ -5,11 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.job import Job
 from app.services.downloader import VideoDownloader
 from app.services.source_resolver import BackendSourceResolver
 from app.services.download_errors import classify_download_error
+from app.services.media_probe import MediaInfo
 from app.workers.queue import JobWorkerQueue
 
 
@@ -82,7 +84,13 @@ async def test_upload_source_resumes_same_job(client, auth_headers, monkeypatch,
     async def capture_enqueue(value: str):
         queued.append(value)
 
+    async def fake_probe(_path):
+        return MediaInfo(duration=120.0, width=1280, height=720)
+
     monkeypatch.setattr(JobWorkerQueue, "enqueue_job", capture_enqueue)
+    monkeypatch.setattr("app.services.source_intake.probe_video", fake_probe)
+    monkeypatch.setattr(settings, "BASE_STORAGE_DIR", str(tmp_path / "storage"))
+    monkeypatch.setattr(settings, "TEMP_DIR", str(tmp_path / "storage" / "temp"))
     upload = await client.post(
         f"/api/v1/jobs/{job_id}/source",
         headers=auth_headers,

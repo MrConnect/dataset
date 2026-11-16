@@ -5,6 +5,8 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
 from app.config import settings
+
+settings.API_KEY = "test-admin-key"
 from app.db.session import Base, engine, get_db, AsyncSessionLocal
 from app.main import app
 

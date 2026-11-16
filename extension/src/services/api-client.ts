@@ -18,7 +18,8 @@ export class ApiClient {
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         const body = await res.json();
-        detail = typeof body?.detail === 'string' ? body.detail : JSON.stringify(body?.detail || body);
+        const raw = body?.detail;
+        detail = typeof raw === 'string' ? raw : typeof raw?.message === 'string' ? raw.message : JSON.stringify(raw || body);
       } else {
         detail = (await res.text()).trim();
       }
@@ -46,22 +47,26 @@ export class ApiClient {
     try {
       const baseUrl = await this.getBaseUrl();
       const headers = await this.getHeaders();
-      const res = await fetch(`${baseUrl}/api/v1/health`, {
-        method: 'GET',
-        headers,
-      });
-
-      if (!res.ok) {
-        return {
-          ok: false,
-          message: `API returned HTTP ${res.status}: ${res.statusText}`,
-        };
+      const health = await fetch(`${baseUrl}/api/v1/health`, { method: 'GET' });
+      if (!health.ok) {
+        return { ok: false, message: `API returned HTTP ${health.status}: ${health.statusText}` };
       }
+      const data = await health.json();
 
-      const data = await res.json();
+      // /health is public, so a reachable server proves nothing about the key.
+      const auth = await fetch(`${baseUrl}/api/v1/auth/me`, { method: 'GET', headers });
+      if (auth.status === 401) {
+        return { ok: false, message: 'Server reached, but the API key was rejected. Generate a client key in the dashboard (System & connection).' };
+      }
+      if (!auth.ok) {
+        return { ok: false, message: `Key check failed with HTTP ${auth.status}` };
+      }
+      const who = await auth.json();
+      const insecure = baseUrl.startsWith('http://') && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(baseUrl);
       return {
         ok: true,
-        message: 'Successfully connected to backend API',
+        message: `Connected as ${who.role === 'admin' ? 'administrator' : `client "${who.name}"`}` +
+          (insecure ? ' — warning: this URL is plain HTTP, so the key and uploads travel unencrypted. Use HTTPS.' : ''),
         data,
       };
     } catch (err: any) {
@@ -220,18 +225,88 @@ export class ApiClient {
     return await res.json();
   }
 
-  static async uploadJobSource(jobId: string, file: File): Promise<void> {
+  /**
+   * Upload a job's source video in resumable chunks.
+   *
+   * A single multi-gigabyte POST dies on the first proxy timeout or network
+   * blip. Here each chunk is its own request; after a failure the client asks
+   * the server how many bytes it holds and continues from there. The server
+   * verifies the finished file (playable video, long enough for every
+   * segment) before the job is resumed.
+   */
+  static async uploadJobSource(
+    jobId: string,
+    file: File,
+    onProgress?: (sentBytes: number, totalBytes: number, verifying: boolean) => void
+  ): Promise<{ warning?: string | null; duration_seconds?: number }> {
     const baseUrl = await this.getBaseUrl();
+    const jsonHeaders = await this.getHeaders();
     const settings = await StorageService.getSettings();
-    const body = new FormData();
-    body.append('file', file);
-    const res = await fetch(`${baseUrl}/api/v1/jobs/${encodeURIComponent(jobId)}/source`, {
+    const keyHeader = { 'X-API-Key': settings.api_key || '' };
+
+    const created = await fetch(`${baseUrl}/api/v1/uploads`, {
       method: 'POST',
-      headers: { 'X-API-Key': settings.api_key || '' },
-      body,
+      headers: jsonHeaders,
+      body: JSON.stringify({ filename: file.name, size: file.size, job_id: jobId }),
     });
-    if (!res.ok) {
-      throw await this.responseError(res, 'Source upload failed');
+    if (!created.ok) throw await this.responseError(created, 'Could not start upload');
+    const session: { upload_id: string; chunk_size?: number } = await created.json();
+    const uploadUrl = `${baseUrl}/api/v1/uploads/${session.upload_id}`;
+    const chunkSize = session.chunk_size || 8 * 1024 * 1024;
+
+    const receivedOnServer = async (): Promise<number | null> => {
+      try {
+        const res = await fetch(uploadUrl, { method: 'GET', headers: keyHeader });
+        if (res.status === 404) throw new Error('Upload session expired on the server. Start the upload again.');
+        if (!res.ok) return null;
+        return (await res.json()).received;
+      } catch (err: any) {
+        if (String(err?.message || '').includes('expired')) throw err;
+        return null; // still offline; the caller retries
+      }
+    };
+
+    try {
+      let offset = 0;
+      let failures = 0;
+      while (offset < file.size) {
+        let res: Response | null = null;
+        try {
+          res = await fetch(`${uploadUrl}?offset=${offset}`, {
+            method: 'PUT',
+            headers: { ...keyHeader, 'Content-Type': 'application/octet-stream' },
+            body: file.slice(offset, offset + chunkSize),
+          });
+        } catch {
+          res = null; // network error
+        }
+
+        if (res?.ok) {
+          offset = (await res.json()).received;
+          failures = 0;
+          onProgress?.(offset, file.size, false);
+          continue;
+        }
+        if (res && [401, 403, 404, 413, 415].includes(res.status)) {
+          throw await this.responseError(res, 'Source upload failed');
+        }
+
+        failures += 1;
+        if (failures > 8) {
+          throw res ? await this.responseError(res, 'Source upload failed') : new Error('Upload interrupted: the server is unreachable.');
+        }
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * 2 ** failures, 15000)));
+        const known = await receivedOnServer();
+        if (known !== null) offset = known;
+      }
+
+      onProgress?.(file.size, file.size, true);
+      const done = await fetch(`${uploadUrl}/complete`, { method: 'POST', headers: keyHeader });
+      if (!done.ok) throw await this.responseError(done, 'The server rejected the uploaded video');
+      return await done.json();
+    } catch (err) {
+      fetch(uploadUrl, { method: 'DELETE', headers: keyHeader }).catch(() => {});
+      throw err;
     }
   }
 }

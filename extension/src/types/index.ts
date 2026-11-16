@@ -67,6 +67,19 @@ export interface TaggingSession {
   last_job_status?: JobStatus;
 }
 
+export interface AutoSaveDraft {
+  id: string;
+  page_url: string;
+  referrer?: string;
+  media_url?: string;
+  duration?: number;
+  segments: Segment[];
+  selectedCategoryId?: string;
+  startMarker?: number | null;
+  endMarker?: number | null;
+  updated_at: number;
+}
+
 export interface JobPayload {
   schema_version: '2.0';
   source: {
@@ -93,6 +106,9 @@ export interface JobPayload {
 
 export interface JobResponse {
   job_id: string;
+  page_url?: string;
+  media_url?: string;
+  media_type?: string;
   status: JobStatus;
   segments_count: number;
   created_at?: string;

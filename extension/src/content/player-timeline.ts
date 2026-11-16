@@ -1,5 +1,6 @@
 import { Category, Segment } from '../types';
 import { formatTime } from '../utils/time';
+import { escapeHtml } from './icons';
 
 export class PlayerTimeline {
   private videoEl: HTMLVideoElement;
@@ -14,7 +15,8 @@ export class PlayerTimeline {
   private currentTime: number = 0;
   private duration: number = 0;
 
-  private onSeekCallback?: (time: number) => void;
+  private selectedId: string | null = null;
+  private onSelectCallback?: (id: string) => void;
 
   constructor(videoEl: HTMLVideoElement) {
     this.videoEl = videoEl;
@@ -123,8 +125,14 @@ export class PlayerTimeline {
     this.render();
   }
 
-  public setOnSeek(cb: (time: number) => void): void {
-    this.onSeekCallback = cb;
+  public setOnSelect(cb: (id: string) => void): void {
+    this.onSelectCallback = cb;
+  }
+
+  public setSelected(id: string | null): void {
+    if (this.selectedId === id) return;
+    this.selectedId = id;
+    this.render();
   }
 
   public updateTime(current: number, duration: number): void {
@@ -197,7 +205,7 @@ export class PlayerTimeline {
       const catName = catObj ? catObj.name : firstCatId || 'Segment';
 
       const segEl = document.createElement('div');
-      segEl.className = 'vdt-timeline-segment';
+      segEl.className = `vdt-timeline-segment${seg.id === this.selectedId ? ' vdt-timeline-segment-selected' : ''}`;
       segEl.style.left = `${leftPct}%`;
       segEl.style.width = `${widthPct}%`;
       segEl.style.backgroundColor = catColor;
@@ -209,8 +217,8 @@ export class PlayerTimeline {
         if (!this.tooltipEl) return;
         const durationText = (seg.end_seconds - seg.start_seconds).toFixed(1) + 's';
         this.tooltipEl.innerHTML = `
-          <span class="vdt-dot" style="background: ${catColor};"></span>
-          <strong>${catName}</strong>
+          <span class="vdt-dot" style="background: ${escapeHtml(catColor)};"></span>
+          <strong>${escapeHtml(catName)}</strong>
           <span style="color: #94a3b8;">${formatTime(seg.start_seconds)} - ${formatTime(seg.end_seconds)} (${durationText})</span>
         `;
         this.tooltipEl.style.left = `${leftPct + widthPct / 2}%`;
@@ -221,11 +229,11 @@ export class PlayerTimeline {
         if (this.tooltipEl) this.tooltipEl.style.display = 'none';
       });
 
-      // Click to seek to segment start
+      // Click selects the segment for editing (and jumps to its start).
       segEl.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (this.onSeekCallback) {
-          this.onSeekCallback(seg.start_seconds);
+        if (this.onSelectCallback) {
+          this.onSelectCallback(seg.id);
         } else {
           this.videoEl.currentTime = seg.start_seconds;
         }
@@ -243,7 +251,7 @@ export class PlayerTimeline {
       pinStart.style.backgroundColor = '#22c55e';
       pinStart.innerHTML = `
         <span class="vdt-timeline-pin-flag" style="background: #22c55e; color: #022c22;">
-          IN ${formatTime(this.startMarker)}
+          ${formatTime(this.startMarker)}
         </span>
       `;
       pinStart.addEventListener('click', (e) => {
@@ -262,7 +270,7 @@ export class PlayerTimeline {
       pinEnd.style.backgroundColor = '#ef4444';
       pinEnd.innerHTML = `
         <span class="vdt-timeline-pin-flag" style="background: #ef4444; color: #ffffff;">
-          OUT ${formatTime(this.endMarker)}
+          ${formatTime(this.endMarker)}
         </span>
       `;
       pinEnd.addEventListener('click', (e) => {

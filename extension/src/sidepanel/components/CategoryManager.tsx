@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import { Check, Cloud, CloudOff, FileDown, FileUp, Pencil, Plus, RefreshCw, Tags, Trash2, X } from 'lucide-react';
 import { Category } from '../../types';
 import { generateId } from '../../utils/uuid';
+import { ConfirmButton, IconButton, IconFileButton, useNotify } from './ui';
 
 interface CategoryManagerProps {
   categories: Category[];
@@ -9,51 +11,47 @@ interface CategoryManagerProps {
   onSync: () => Promise<void>;
 }
 
+const DEFAULT_COLOR = '#22C55E';
+const PALETTE = ['#22C55E', '#3B82F6', '#F59E0B', '#EF4444', '#A855F7', '#06B6D4', '#EC4899', '#84CC16'];
+
 export const CategoryManager: React.FC<CategoryManagerProps> = ({
   categories,
   onSaveCategories,
   syncState,
   onSync,
 }) => {
+  const notify = useNotify();
   const [name, setName] = useState('');
-  const [color, setColor] = useState('#22C55E');
+  const [color, setColor] = useState(DEFAULT_COLOR);
   const [description, setDescription] = useState('');
   const [shortcut, setShortcut] = useState('');
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
+
+  const resetForm = () => {
+    setEditingCatId(null);
+    setName('');
+    setDescription('');
+    setShortcut('');
+    setColor(DEFAULT_COLOR);
+  };
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
-    if (editingCatId) {
-      const updated = categories.map((cat) =>
-        cat.id === editingCatId
-          ? {
-              ...cat,
-              name: name.trim(),
-              color,
-              description: description.trim() || undefined,
-              shortcut: shortcut.trim() || undefined,
-            }
-          : cat
-      );
-      await onSaveCategories(updated);
-      setEditingCatId(null);
-    } else {
-      const newCat: Category = {
-        id: generateId('cat'),
-        name: name.trim(),
-        color,
-        description: description.trim() || undefined,
-        shortcut: shortcut.trim() || undefined,
-      };
-      await onSaveCategories([...categories, newCat]);
-    }
+    const fields = {
+      name: name.trim(),
+      color,
+      description: description.trim() || undefined,
+      shortcut: shortcut.trim() || undefined,
+    };
 
-    setName('');
-    setDescription('');
-    setShortcut('');
-    setColor('#22C55E');
+    if (editingCatId) {
+      await onSaveCategories(categories.map((cat) => (cat.id === editingCatId ? { ...cat, ...fields } : cat)));
+    } else {
+      await onSaveCategories([...categories, { id: generateId('cat'), ...fields }]);
+    }
+    resetForm();
   };
 
   const handleEdit = (cat: Category) => {
@@ -65,222 +63,150 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({
   };
 
   const handleDelete = async (catId: string) => {
-    if (confirm('Are you sure you want to delete this category?')) {
-      await onSaveCategories(categories.filter((c) => c.id !== catId));
-    }
+    if (editingCatId === catId) resetForm();
+    await onSaveCategories(categories.filter((c) => c.id !== catId));
   };
 
   const handleExport = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(categories, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `preset_categories_${Date.now()}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+    const url = URL.createObjectURL(new Blob([JSON.stringify(categories, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `labels_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const handleImport = (file: File) => {
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
-        if (Array.isArray(parsed)) {
-          // Validate structure
-          const valid = parsed.map((item: any) => ({
-            id: String(item.id || generateId('cat')),
-            name: String(item.name || 'Unnamed'),
-            color: String(item.color || '#3b82f6'),
-            description: item.description ? String(item.description) : undefined,
-            shortcut: item.shortcut ? String(item.shortcut) : undefined,
-          }));
-          await onSaveCategories(valid);
-          alert(`Successfully imported ${valid.length} categories.`);
-        }
-      } catch (err) {
-        alert('Failed to parse categories JSON file.');
+        if (!Array.isArray(parsed)) throw new Error('expected a list of labels');
+        const valid: Category[] = parsed.map((item: any) => ({
+          id: String(item.id || generateId('cat')),
+          name: String(item.name || 'Unnamed'),
+          color: String(item.color || '#3b82f6'),
+          description: item.description ? String(item.description) : undefined,
+          shortcut: item.shortcut ? String(item.shortcut) : undefined,
+        }));
+        await onSaveCategories(valid);
+        notify(`Imported ${valid.length} labels`);
+      } catch (err: any) {
+        notify(`Could not import: ${err.message}`, 'error');
       }
     };
     reader.readAsText(file);
-    e.target.value = '';
   };
 
+  const SyncIcon = syncState === 'offline' ? CloudOff : Cloud;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      <div className="card" style={{ padding: '9px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: '11px', color: syncState === 'offline' ? '#fca5a5' : 'var(--text-secondary)' }}>
-          {syncState === 'synced' ? 'Labels synced with server' : syncState === 'syncing' ? 'Syncing labels…' : 'Server unavailable — saved locally'}
+    <div className="stack">
+      <div className="section-head">
+        <span className="section-title">
+          <SyncIcon size={13} aria-hidden className={syncState === 'offline' ? 'text-bad' : 'text-muted'} />
+          {syncState === 'synced' ? 'Synced with server' : syncState === 'syncing' ? 'Syncing…' : 'Saved locally only'}
         </span>
-        <button className="btn btn-secondary btn-sm" onClick={() => void onSync()} disabled={syncState === 'syncing'}>
-          Sync now
-        </button>
+        <div className="row">
+          <IconButton icon={FileDown} label="Export labels as JSON" onClick={handleExport} disabled={!categories.length} />
+          <IconFileButton icon={FileUp} label="Import labels from JSON (replaces the list)" accept=".json" onFile={handleImport} />
+          <IconButton
+            icon={RefreshCw}
+            label="Sync labels now"
+            spinning={syncState === 'syncing'}
+            disabled={syncState === 'syncing'}
+            onClick={() => void onSync()}
+          />
+        </div>
       </div>
-      {/* Category Editor Card */}
-      <div className="card">
-        <div className="card-title">
-          <span>{editingCatId ? 'Edit Category' : 'New Preset Category'}</span>
-          {editingCatId && (
+
+      <form className="card label-form" onSubmit={handleCreateOrUpdate}>
+        <div className="label-form-main">
+          <label className="color-swatch" style={{ background: color }} title="Label colour">
+            <input type="color" value={color} onChange={(e) => setColor(e.target.value)} aria-label="Label colour" />
+          </label>
+          <input
+            type="text"
+            className="input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={editingCatId ? 'Label name' : 'New label, e.g. Person walking'}
+            aria-label="Label name"
+            required
+          />
+          <input
+            type="text"
+            maxLength={1}
+            className="input key-input"
+            value={shortcut}
+            onChange={(e) => setShortcut(e.target.value)}
+            placeholder="⌨"
+            title="Keyboard shortcut (one key, optional)"
+            aria-label="Keyboard shortcut"
+          />
+          {editingCatId && <IconButton icon={X} label="Cancel editing" onClick={resetForm} />}
+          <IconButton
+            type="submit"
+            icon={editingCatId ? Check : Plus}
+            label={editingCatId ? 'Save changes' : 'Add label'}
+            variant="primary"
+            disabled={!name.trim()}
+          />
+        </div>
+
+        <div className="palette">
+          {PALETTE.map((swatch) => (
             <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => {
-                setEditingCatId(null);
-                setName('');
-                setDescription('');
-                setShortcut('');
-              }}
-            >
-              Cancel Edit
-            </button>
-          )}
+              key={swatch}
+              type="button"
+              className={swatch.toLowerCase() === color.toLowerCase() ? 'active' : ''}
+              style={{ background: swatch }}
+              title={swatch}
+              aria-label={`Use colour ${swatch}`}
+              onClick={() => setColor(swatch)}
+            />
+          ))}
         </div>
 
-        <form onSubmit={handleCreateOrUpdate} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div>
-            <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Category Name *</label>
-            <input
-              type="text"
-              className="input"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Person Walking"
-              required
-            />
-          </div>
+        <input
+          type="text"
+          className="input"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Annotation guideline (optional)"
+          aria-label="Description"
+        />
+      </form>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-            <div>
-              <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Badge Color</label>
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                <input
-                  type="color"
-                  value={color}
-                  onChange={(e) => setColor(e.target.value)}
-                  style={{
-                    border: 'none',
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    backgroundColor: 'transparent',
-                  }}
-                />
-                <input
-                  type="text"
-                  className="input"
-                  value={color}
-                  onChange={(e) => setColor(e.target.value)}
-                  style={{ flex: 1 }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Shortcut (Optional)</label>
-              <input
-                type="text"
-                maxLength={1}
-                className="input"
-                value={shortcut}
-                onChange={(e) => setShortcut(e.target.value)}
-                placeholder="e.g. w"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Description (Optional)</label>
-            <input
-              type="text"
-              className="input"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Brief annotation guideline..."
-            />
-          </div>
-
-          <button type="submit" className="btn btn-primary" style={{ marginTop: '4px' }}>
-            {editingCatId ? 'Save Changes' : 'Create Category'}
-          </button>
-        </form>
-      </div>
-
-      {/* Preset Categories List */}
-      <div className="card">
-        <div className="card-title">
-          <span>Preset Categories ({categories.length})</span>
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <button className="btn btn-secondary btn-sm" onClick={handleExport} title="Export to JSON">
-              Export
-            </button>
-            <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }} title="Import from JSON">
-              Import
-              <input type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
-            </label>
-          </div>
+      {categories.length === 0 ? (
+        <div className="empty-state">
+          <Tags size={26} aria-hidden />
+          <strong>No labels yet</strong>
+          <span>Add the labels you will tag segments with.</span>
         </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      ) : (
+        <div className="label-list">
           {categories.map((cat) => (
-            <div
-              key={cat.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '8px 10px',
-                backgroundColor: 'var(--bg-primary)',
-                borderRadius: '6px',
-                border: '1px solid var(--border-color)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span
-                  style={{
-                    width: '12px',
-                    height: '12px',
-                    borderRadius: '50%',
-                    backgroundColor: cat.color,
-                  }}
-                />
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: '12px' }}>
-                    {cat.name}
-                    {cat.shortcut && (
-                      <span
-                        style={{
-                          marginLeft: '6px',
-                          fontSize: '10px',
-                          padding: '1px 4px',
-                          backgroundColor: 'var(--bg-tertiary)',
-                          borderRadius: '3px',
-                          color: '#38bdf8',
-                        }}
-                      >
-                        [{cat.shortcut}]
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: '10px', color: '#64748b' }}>
-                    ID: {cat.id} {cat.description ? `• ${cat.description}` : ''}
-                  </div>
-                </div>
+            <div key={cat.id} className={`label-row ${editingCatId === cat.id ? 'editing' : ''}`}>
+              <span className="label-dot" style={{ background: cat.color }} />
+              <div className="label-text">
+                <strong>
+                  {cat.name}
+                  {cat.shortcut && <kbd>{cat.shortcut}</kbd>}
+                </strong>
+                {cat.description && <small title={cat.description}>{cat.description}</small>}
               </div>
-
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button className="btn btn-secondary btn-sm" onClick={() => handleEdit(cat)}>
-                  Edit
-                </button>
-                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(cat.id)}>
-                  Del
-                </button>
-              </div>
+              <IconButton icon={Pencil} label={`Edit ${cat.name}`} variant="ghost" onClick={() => handleEdit(cat)} />
+              <ConfirmButton
+                icon={Trash2}
+                label={`Delete ${cat.name}`}
+                confirmLabel="Click again to delete this label"
+                onConfirm={() => void handleDelete(cat.id)}
+              />
             </div>
           ))}
         </div>
-      </div>
+      )}
     </div>
   );
 };

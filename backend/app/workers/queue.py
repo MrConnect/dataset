@@ -1,302 +1,452 @@
+"""Job workers.
+
+The ``jobs`` table is the queue: a row with ``status = 'queued'`` is waiting
+for a worker. Workers claim rows with an atomic UPDATE, so nothing is held
+only in memory and a restart loses no work — jobs that were mid-flight when
+the process died are put back to ``queued`` on startup.
+
+The only in-memory state is a pair of sets used to signal jobs that are
+running *right now* in this process (cancel / purge).
+"""
+
 import asyncio
 import logging
 import shutil
 from pathlib import Path
+
 from sqlalchemy import select, update
+
 from app.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.job import Job, JobSegment
-from app.services.downloader import VideoDownloader
-from app.services.video_processor import VideoProcessor
-from app.services.storage_manager import StorageManager
 from app.services.download_errors import classify_download_error
+from app.services.downloader import DownloadCancelled, VideoDownloader, remove_partial_downloads
+from app.services.source_intake import find_library_source
+from app.services.storage_manager import StorageManager
+from app.services.thumbnails import ThumbnailWorker
+from app.services.video_processor import VideoProcessor
 
 logger = logging.getLogger("worker")
 
+ACTIVE_STATUSES = ("downloading", "processing")
+
+
+class JobCancelled(Exception):
+    """Raised inside the pipeline when the running job was cancelled or deleted."""
+
 
 class JobWorkerQueue:
-    _queue: asyncio.Queue[str] = asyncio.Queue()
+    POLL_INTERVAL_SECONDS = 5.0
+
+    _wake: asyncio.Event | None = None
     _cancelled_jobs: set[str] = set()
     _purge_jobs: set[str] = set()
+    _active_jobs: set[str] = set()
     _workers: list[asyncio.Task] = []
     _running: bool = False
 
+    # --- lifecycle ---------------------------------------------------------
+
     @classmethod
     async def start(cls, num_workers: int = 2) -> None:
+        cls._wake = asyncio.Event()
         cls._running = True
+        recovered = await cls.recover_interrupted_jobs()
+        if recovered:
+            logger.warning("Re-queued %d job(s) interrupted by a restart", recovered)
         for i in range(num_workers):
-            task = asyncio.create_task(cls._worker_loop(i))
-            cls._workers.append(task)
-        logger.info(f"Started {num_workers} background job workers")
+            cls._workers.append(asyncio.create_task(cls._worker_loop(i)))
+        logger.info("Started %d background job workers", num_workers)
 
     @classmethod
     async def stop(cls) -> None:
         cls._running = False
-        for task in cls._workers:
+        workers, cls._workers = cls._workers, []
+        for task in workers:
             task.cancel()
-        cls._workers.clear()
+        await asyncio.gather(*workers, return_exceptions=True)
+        cls._wake = None
+
+    @classmethod
+    async def recover_interrupted_jobs(cls) -> int:
+        """Put jobs that were running when the server stopped back in the queue."""
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                update(Job)
+                .where(Job.status.in_(ACTIVE_STATUSES))
+                .values(status="queued", progress=0)
+            )
+            await session.commit()
+            return result.rowcount or 0
+
+    # --- signalling --------------------------------------------------------
 
     @classmethod
     async def enqueue_job(cls, job_id: str) -> None:
-        await cls._queue.put(job_id)
+        """Announce that ``job_id`` was written with status 'queued'."""
+        cls._cancelled_jobs.discard(job_id)
+        cls._purge_jobs.discard(job_id)
+        if cls._wake is not None:
+            cls._wake.set()
 
     @classmethod
     def cancel_job(cls, job_id: str) -> None:
-        cls._cancelled_jobs.add(job_id)
+        if job_id in cls._active_jobs:
+            cls._cancelled_jobs.add(job_id)
 
     @classmethod
     def purge_job(cls, job_id: str) -> None:
         """Cancel a job and request a final artifact sweep by its worker."""
-        cls._cancelled_jobs.add(job_id)
-        cls._purge_jobs.add(job_id)
+        if job_id in cls._active_jobs:
+            cls._cancelled_jobs.add(job_id)
+            cls._purge_jobs.add(job_id)
+
+    @classmethod
+    def cancel_all_active(cls, purge: bool = False) -> None:
+        for job_id in list(cls._active_jobs):
+            cls._cancelled_jobs.add(job_id)
+            if purge:
+                cls._purge_jobs.add(job_id)
+
+    @classmethod
+    def _is_cancelled(cls, job_id: str) -> bool:
+        return job_id in cls._cancelled_jobs
+
+    # --- worker loop -------------------------------------------------------
+
+    @classmethod
+    async def _claim_next_job(cls) -> str | None:
+        """Atomically move the oldest queued job to 'downloading' and return its id."""
+        async with AsyncSessionLocal() as session:
+            for _ in range(5):
+                candidate = (
+                    await session.execute(
+                        select(Job.id)
+                        .where(Job.status == "queued")
+                        .order_by(Job.created_at, Job.id)
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if candidate is None:
+                    return None
+                claimed = await session.execute(
+                    update(Job)
+                    .where(Job.id == candidate, Job.status == "queued")
+                    .values(status="downloading", progress=0)
+                )
+                await session.commit()
+                if claimed.rowcount == 1:
+                    return candidate
+                # Another worker won the race; try the next row.
+        return None
 
     @classmethod
     async def _worker_loop(cls, worker_id: int) -> None:
         while cls._running:
             try:
-                job_id = await cls._queue.get()
-                if job_id in cls._cancelled_jobs:
-                    if job_id in cls._purge_jobs:
-                        StorageManager.delete_job_files(job_id)
-                        cls._purge_jobs.discard(job_id)
-                    cls._cancelled_jobs.discard(job_id)
-                    cls._queue.task_done()
+                wake = cls._wake
+                if wake is not None:
+                    wake.clear()
+                job_id = await cls._claim_next_job()
+                if job_id is None:
+                    if wake is None:
+                        await asyncio.sleep(cls.POLL_INTERVAL_SECONDS)
+                    else:
+                        try:
+                            await asyncio.wait_for(wake.wait(), timeout=cls.POLL_INTERVAL_SECONDS)
+                        except asyncio.TimeoutError:
+                            pass
                     continue
-
                 await cls._process_job(job_id)
-                cls._queue.task_done()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Worker {worker_id} unexpected error: {e}", exc_info=True)
+                await asyncio.sleep(1.0)
+
+    # --- pipeline ----------------------------------------------------------
 
     @classmethod
     async def _process_job(cls, job_id: str) -> None:
         source_path: Path | None = None
         source_should_persist = False
+        cls._active_jobs.add(job_id)
+
+        def check_cancelled() -> None:
+            if cls._is_cancelled(job_id):
+                raise JobCancelled()
+
+        try:
+            async with AsyncSessionLocal() as session:
+                job = await session.get(Job, job_id)
+                if not job or job.status == "cancelled":
+                    return
+
+                try:
+                    source_path, source_should_persist = await cls._run_pipeline(
+                        session, job, check_cancelled
+                    )
+                except (JobCancelled, DownloadCancelled):
+                    await session.rollback()
+                    await cls._mark_cancelled(job_id)
+                except Exception as e:
+                    await session.rollback()
+                    if cls._is_cancelled(job_id):
+                        await cls._mark_cancelled(job_id)
+                        return
+                    logger.error(f"Job {job_id} processing failed: {e}", exc_info=True)
+                    failure = classify_download_error(e)
+                    await cls._record_failure(
+                        job_id,
+                        status="awaiting_source" if failure.source_required else "failed",
+                        failure_code=failure.code,
+                        error=str(failure),
+                        progress=0 if failure.source_required else 100,
+                    )
+        finally:
+            purge = job_id in cls._purge_jobs
+            cls._active_jobs.discard(job_id)
+            cls._cancelled_jobs.discard(job_id)
+            cls._purge_jobs.discard(job_id)
+            if purge:
+                StorageManager.delete_job_files(job_id, str(source_path) if source_path else None)
+            else:
+                # Never leave half-downloaded multi-gigabyte files behind.
+                for suffix in (".ts", ".mp4"):
+                    remove_partial_downloads(settings.temp_path / f"{job_id}_source{suffix}")
+                for leftover in settings.temp_path.glob(f"{job_id}_*_cut.mp4"):
+                    leftover.unlink(missing_ok=True)
+
+    @classmethod
+    async def _mark_cancelled(cls, job_id: str) -> None:
+        """Persist 'cancelled' unless the row was deleted (purge)."""
+        if job_id in cls._purge_jobs:
+            return
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                update(Job).where(Job.id == job_id).values(status="cancelled")
+            )
+            await session.commit()
+
+    @classmethod
+    async def _record_failure(cls, job_id: str, **values) -> None:
+        async with AsyncSessionLocal() as session:
+            await session.execute(update(Job).where(Job.id == job_id).values(**values))
+            await session.commit()
+
+    @classmethod
+    async def _run_pipeline(cls, session, job: Job, check_cancelled) -> tuple[Path | None, bool]:
+        """Acquire the source, cut every segment, write metadata.
+
+        Returns ``(source_path, source_should_persist)`` for final cleanup.
+        """
+        job_id = job.id
+        source_path: Path | None = None
+        source_should_persist = False
         errors: list[str] = []
 
-        async with AsyncSessionLocal() as session:
-            # Load Job
-            job = await session.get(Job, job_id)
-            if not job:
-                return
+        segments = list(
+            (await session.execute(
+                select(JobSegment).where(JobSegment.job_id == job.id).order_by(JobSegment.id)
+            )).scalars().all()
+        )
+        required_seconds = max((seg.end_seconds for seg in segments), default=None)
 
-            if job.id in cls._cancelled_jobs:
-                return
+        # 1. Acquire the source
+        job.status = "downloading"
+        job.progress = 10
+        await session.commit()
 
+        headers = dict(job.source_headers or {})
+        if job.page_url and not any(key.lower() == "referer" for key in headers):
+            headers["Referer"] = job.page_url
+
+        async def on_download_progress(pct: int):
+            job.progress = min(100, pct)
+            await session.commit()
+
+        library_source = None if job.source_file_path else find_library_source(job.media_url)
+
+        if job.source_file_path:
+            source_path = Path(job.source_file_path)
+            source_should_persist = True
+            if not source_path.exists():
+                raise FileNotFoundError("Uploaded source file is missing. Upload it again to resume the job.")
+            probed_duration = await VideoDownloader._probe_media(source_path)
+        elif library_source is not None:
+            # The video was tagged while playing from this server's own
+            # library: cut the local file instead of downloading it from ourselves.
+            source_path = library_source
+            source_should_persist = True
+            probed_duration = await VideoDownloader._probe_media(source_path)
+        elif job.acquisition_mode == "upload":
+            job.status = "awaiting_source"
+            job.failure_code = "SOURCE_UPLOAD_REQUIRED"
+            job.error = "Upload the source video to continue this job."
+            job.progress = 0
+            await session.commit()
+            return None, False
+        else:
+            target_url, resolved_type, req_headers = await VideoDownloader.resolve_stream(
+                media_url=job.media_url,
+                media_type=job.media_type,
+                variant_url=job.variant_url,
+                headers=headers,
+                target_height=job.quality_height,
+            )
+            check_cancelled()
+            logger.info(f"Job {job.id} downloading source video from {target_url[:80]}...")
             try:
-                # 1. Transition to downloading
-                job.status = "downloading"
-                job.progress = 10
-                await session.commit()
-
-                headers = dict(job.source_headers or {})
-                if job.page_url and not any(key.lower() == "referer" for key in headers):
-                    headers["Referer"] = job.page_url
-
-                async def on_download_progress(pct: int):
-                    job.progress = min(100, pct)
-                    await session.commit()
-                
-                if job.source_file_path:
-                    source_path = Path(job.source_file_path)
-                    source_should_persist = True
-                    if not source_path.exists():
-                        raise FileNotFoundError("Uploaded source file is missing. Upload it again to resume the job.")
-                    probed_duration = await VideoDownloader._probe_media(source_path)
-                    headers_to_use = {}
-                elif job.acquisition_mode == "upload":
+                source_path, probed_duration = await VideoDownloader.download_source(
+                    job_id=job.id,
+                    media_url=target_url,
+                    media_type=resolved_type,
+                    headers=req_headers,
+                    duration_seconds=job.duration_seconds,
+                    progress_callback=on_download_progress,
+                    target_height=job.quality_height,
+                    pre_resolved=True,
+                    required_seconds=required_seconds,
+                    should_cancel=lambda: cls._is_cancelled(job_id),
+                )
+            except DownloadCancelled:
+                raise
+            except Exception as source_error:
+                check_cancelled()
+                failure = classify_download_error(source_error)
+                if failure.source_required:
                     job.status = "awaiting_source"
-                    job.failure_code = "SOURCE_UPLOAD_REQUIRED"
-                    job.error = "Upload the source video to continue this job."
+                    job.failure_code = failure.code
+                    job.error = str(failure)
                     job.progress = 0
                     await session.commit()
-                    return
-                else:
-                    target_url, resolved_type, req_headers = await VideoDownloader.resolve_stream(
-                        media_url=job.media_url,
-                        media_type=job.media_type,
-                        variant_url=job.variant_url,
-                        headers=headers,
-                        target_height=job.quality_height,
+                    return None, False
+                raise failure from source_error
+
+        check_cancelled()
+
+        if settings.KEEP_DOWNLOADED_SOURCES and source_path and not source_should_persist:
+            archived_source = settings.downloads_path / f"{job.id}_source{source_path.suffix or '.mp4'}"
+            archived_source.unlink(missing_ok=True)
+            await asyncio.to_thread(shutil.move, str(source_path), str(archived_source))
+            source_path = archived_source
+            source_should_persist = True
+            job.source_file_path = str(source_path)
+            await session.commit()
+            ThumbnailWorker.schedule("_downloads", archived_source.name)
+
+        try:
+            # The browser-reported duration is not enforced: streaming sites
+            # often report values that differ wildly from the real payload.
+            job.duration_seconds = probed_duration
+            job.failure_code = None
+            job.error = None
+
+            check_cancelled()
+
+            # 2. Cut segments
+            job.status = "processing"
+            job.progress = 0
+            await session.commit()
+
+            segment_records = []
+            success_count = 0
+            total_segments = len(segments)
+
+            for idx, seg in enumerate(segments):
+                check_cancelled()
+                temp_cut_out = settings.temp_path / f"{job.id}_{seg.segment_id}_cut.mp4"
+
+                try:
+                    actual_dur = await VideoProcessor.extract_segment(
+                        source_path=source_path,
+                        output_path=temp_cut_out,
+                        start_seconds=seg.start_seconds,
+                        end_seconds=seg.end_seconds,
+                        total_duration=probed_duration,
                     )
-                    logger.info(f"Job {job.id} downloading source video from {target_url[:80]}...")
-                    try:
-                        source_path, probed_duration = await VideoDownloader.download_source(
-                            job_id=job.id,
-                            media_url=target_url,
-                            media_type=resolved_type,
-                            headers=req_headers,
-                            duration_seconds=job.duration_seconds,
-                            progress_callback=on_download_progress,
-                            target_height=job.quality_height,
-                        )
-                    except Exception as source_error:
-                        failure = classify_download_error(source_error)
-                        if failure.source_required:
-                            job.status = "awaiting_source"
-                            job.failure_code = failure.code
-                            job.error = str(failure)
-                            job.progress = 0
-                            await session.commit()
-                            return
-                        raise failure from source_error
-                    headers_to_use = req_headers
+                    check_cancelled()
 
-                if settings.KEEP_DOWNLOADED_SOURCES and source_path and not source_should_persist:
-                    downloads_dir = Path(settings.BASE_STORAGE_DIR) / "downloads"
-                    downloads_dir.mkdir(parents=True, exist_ok=True)
-                    archived_source = downloads_dir / f"{job.id}_source{source_path.suffix or '.mp4'}"
-                    archived_source.unlink(missing_ok=True)
-                    await asyncio.to_thread(shutil.move, str(source_path), str(archived_source))
-                    source_path = archived_source
-                    source_should_persist = True
-                    job.source_file_path = str(source_path)
-                    await session.commit()
-
-                expected_duration = job.duration_seconds
-                job.duration_seconds = probed_duration
-                # We completely removed the strict duration check here because streaming sites often report wildly inaccurate durations compared to the raw M3U8 payload.
-                
-                job.failure_code = None
-                job.error = None
-
-                if job.id in cls._cancelled_jobs:
-                    await session.rollback()
-                    return
-
-                # 2. Transition to processing segments
-                job.status = "processing"
-                job.progress = 0
-                await session.commit()
-
-                # Fetch segments
-                res = await session.execute(
-                    select(JobSegment).where(JobSegment.job_id == job.id)
-                )
-                segments = res.scalars().all()
-
-                segment_records = []
-                success_count = 0
-
-                total_segments = len(segments)
-                for idx, seg in enumerate(segments):
-                    if job.id in cls._cancelled_jobs:
-                        await session.rollback()
-                        return
-
-                    temp_cut_out = settings.temp_path / f"{job.id}_{seg.segment_id}_cut.mp4"
-
-                    try:
-                        actual_dur = await VideoProcessor.extract_segment(
-                            source_path=source_path,
-                            output_path=temp_cut_out,
-                            start_seconds=seg.start_seconds,
-                            end_seconds=seg.end_seconds,
-                            total_duration=job.duration_seconds or probed_duration,
-                            headers=headers_to_use,
-                        )
-
-                        if job.id in cls._cancelled_jobs:
-                            temp_cut_out.unlink(missing_ok=True)
-                            await session.rollback()
-                            return
-
-                        stored_files = StorageManager.store_segment_files(
-                            job_id=job.id,
-                            segment_id=seg.segment_id,
-                            temp_segment_path=temp_cut_out,
-                            category_ids=seg.categories,
-                        )
-
-                        seg.status = "completed"
-                        seg.duration = actual_dur
-                        seg.output_path = stored_files[0] if stored_files else None
-                        success_count += 1
-
-                        segment_records.append({
-                            "segment_id": seg.segment_id,
-                            "start_seconds": seg.start_seconds,
-                            "end_seconds": seg.end_seconds,
-                            "actual_duration": actual_dur,
-                            "categories": seg.categories,
-                            "output_files": stored_files,
-                            "status": "completed",
-                        })
-                    except Exception as seg_err:
-                        if job.id in cls._cancelled_jobs:
-                            temp_cut_out.unlink(missing_ok=True)
-                            await session.rollback()
-                            return
-                        err_str = f"Segment {seg.segment_id} failed: {seg_err}"
-                        logger.error(err_str)
-                        seg.status = "failed"
-                        seg.error = str(seg_err)
-                        errors.append(err_str)
-                        segment_records.append({
-                            "segment_id": seg.segment_id,
-                            "start_seconds": seg.start_seconds,
-                            "end_seconds": seg.end_seconds,
-                            "categories": seg.categories,
-                            "status": "failed",
-                            "error": str(seg_err),
-                        })
-
-                    progress_pct = int(((idx + 1) / total_segments) * 100)
-                    job.progress = min(100, progress_pct)
-                    await session.commit()
-
-                # 3. Generate traceable CVAT metadata JSON
-                StorageManager.save_job_metadata(
-                    job_id=job.id,
-                    page_url=job.page_url,
-                    media_url=job.media_url,
-                    media_type=job.media_type,
-                    quality={"height": job.quality_height, "representation_id": job.representation_id},
-                    source_duration=job.duration_seconds or probed_duration,
-                    segment_records=segment_records,
-                    errors=errors,
-                )
-
-                # 4. Final status determination
-                if success_count == total_segments and total_segments > 0:
-                    job.status = "completed"
-                elif success_count > 0:
-                    job.status = "partially_completed"
-                else:
-                    job.status = "failed"
-
-                job.progress = 100
-                if errors:
-                    job.error = "; ".join(errors)
-
-                await session.commit()
-
-            except Exception as e:
-                if job_id in cls._cancelled_jobs:
-                    await session.rollback()
-                    return
-                logger.error(f"Job {job_id} processing failed: {e}", exc_info=True)
-                failure = classify_download_error(e)
-                job.status = "awaiting_source" if failure.source_required else "failed"
-                job.failure_code = failure.code
-                job.error = str(failure)
-                job.progress = 0 if failure.source_required else 100
-                await session.commit()
-
-            finally:
-                if job_id in cls._purge_jobs:
-                    StorageManager.delete_job_files(
-                        job_id,
-                        str(source_path) if source_path else None,
+                    stored_files = StorageManager.store_segment_files(
+                        job_id=job.id,
+                        segment_id=seg.segment_id,
+                        temp_segment_path=temp_cut_out,
+                        category_ids=seg.categories,
                     )
-                    cls._purge_jobs.discard(job_id)
-                    cls._cancelled_jobs.discard(job_id)
-                # Cleanup non-persistent downloaded sources instead of leaving
-                # multi-gigabyte debug artifacts behind.
-                elif source_path and not source_should_persist and isinstance(source_path, Path) and source_path.exists():
-                    try:
-                        source_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+
+                    locations = [(Path(p).parent.name, Path(p).name) for p in stored_files]
+                    if locations:
+                        # One render per clip; extra categories reuse the image.
+                        ThumbnailWorker.schedule(*locations[0], also=locations[1:])
+
+                    seg.status = "completed"
+                    seg.duration = actual_dur
+                    seg.error = None
+                    seg.output_path = stored_files[0] if stored_files else None
+                    success_count += 1
+
+                    segment_records.append({
+                        "segment_id": seg.segment_id,
+                        "start_seconds": seg.start_seconds,
+                        "end_seconds": seg.end_seconds,
+                        "actual_duration": actual_dur,
+                        "categories": seg.categories,
+                        "output_files": stored_files,
+                        "status": "completed",
+                    })
+                except JobCancelled:
+                    temp_cut_out.unlink(missing_ok=True)
+                    raise
+                except Exception as seg_err:
+                    temp_cut_out.unlink(missing_ok=True)
+                    check_cancelled()
+                    err_str = f"Segment {seg.segment_id} failed: {seg_err}"
+                    logger.error(err_str)
+                    seg.status = "failed"
+                    seg.error = str(seg_err)
+                    errors.append(err_str)
+                    segment_records.append({
+                        "segment_id": seg.segment_id,
+                        "start_seconds": seg.start_seconds,
+                        "end_seconds": seg.end_seconds,
+                        "categories": seg.categories,
+                        "status": "failed",
+                        "error": str(seg_err),
+                    })
+
+                job.progress = min(100, int(((idx + 1) / total_segments) * 100))
+                await session.commit()
+
+            # 3. Generate traceable CVAT metadata JSON
+            StorageManager.save_job_metadata(
+                job_id=job.id,
+                page_url=job.page_url,
+                media_url=job.media_url,
+                media_type=job.media_type,
+                quality={"height": job.quality_height, "representation_id": job.representation_id},
+                source_duration=probed_duration,
+                segment_records=segment_records,
+                errors=errors,
+            )
+
+            # 4. Final status determination
+            check_cancelled()
+            if success_count == total_segments and total_segments > 0:
+                job.status = "completed"
+            elif success_count > 0:
+                job.status = "partially_completed"
+            else:
+                job.status = "failed"
+
+            job.progress = 100
+            if errors:
+                job.error = "; ".join(errors)
+            await session.commit()
+        finally:
+            if source_path and not source_should_persist:
+                try:
+                    source_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        return source_path, source_should_persist

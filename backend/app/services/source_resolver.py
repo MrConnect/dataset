@@ -7,7 +7,7 @@ import httpx
 import m3u8
 
 from app.config import settings
-from app.core.ssrf import validate_url_safety
+from app.core.ssrf import guarded_client, validate_url_safety
 from app.schemas.source import SourceResolveResponse, VideoQualitySchema
 
 
@@ -77,7 +77,7 @@ class BackendSourceResolver:
 
     @staticmethod
     async def _resolve_hls(media_url: str, headers: dict[str, str]) -> tuple[list[VideoQualitySchema], float | None]:
-        async with httpx.AsyncClient(headers=headers, timeout=15.0, follow_redirects=True) as client:
+        async with guarded_client(headers=headers, timeout=15.0, follow_redirects=True) as client:
             resp = await client.get(media_url)
             resp.raise_for_status()
             # Validate final redirect destination against SSRF
@@ -114,7 +114,7 @@ class BackendSourceResolver:
 
     @staticmethod
     async def _resolve_dash(media_url: str, headers: dict[str, str]) -> tuple[list[VideoQualitySchema], float | None]:
-        async with httpx.AsyncClient(headers=headers, timeout=15.0, follow_redirects=True) as client:
+        async with guarded_client(headers=headers, timeout=15.0, follow_redirects=True) as client:
             resp = await client.get(media_url)
             resp.raise_for_status()
             validate_url_safety(str(resp.url))

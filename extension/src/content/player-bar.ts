@@ -1,5 +1,7 @@
 import { Category, DetectedSource, Segment, VideoQuality } from '../types';
 import { formatTime } from '../utils/time';
+import { ICONS, escapeHtml } from './icons';
+
 
 export class PlayerBar {
   private container: HTMLDivElement;
@@ -31,6 +33,8 @@ export class PlayerBar {
   private onCreateCategoryRequest?: (name: string) => void;
   private onPlayToggleRequest?: () => void;
   private onSeekRequest?: (time: number) => void;
+  private onStepFrameRequest?: (direction: -1 | 1) => void;
+  private onDeleteEditingRequest?: () => void;
 
   private isDraggingSeek: boolean = false;
 
@@ -107,7 +111,11 @@ export class PlayerBar {
     onCreateCategory: (name: string) => void;
     onPlayToggle: () => void;
     onSeek: (time: number) => void;
+    onStepFrame: (direction: -1 | 1) => void;
+    onDeleteEditing: () => void;
   }): void {
+    this.onStepFrameRequest = callbacks.onStepFrame;
+    this.onDeleteEditingRequest = callbacks.onDeleteEditing;
     this.onMarkStartRequest = callbacks.onMarkStart;
     this.onMarkEndRequest = callbacks.onMarkEnd;
     this.onSaveSegmentRequest = callbacks.onSaveSegment;
@@ -141,9 +149,7 @@ export class PlayerBar {
     if (!this.isPinned) return;
     const btn = this.container.querySelector('#vdt-btn-play');
     if (btn) {
-      btn.innerHTML = paused 
-        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>' 
-        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
+      btn.innerHTML = paused ? ICONS.play : ICONS.pause;
     }
   }
 
@@ -176,7 +182,8 @@ export class PlayerBar {
   private render(): void {
     if (!this.isPinned) {
       this.container.className = 'vdt-collapsed-ball';
-      this.container.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"></path><path d="M9 21H3v-6"></path><path d="M21 3l-7 7"></path><path d="M3 21l7-7"></path></svg>`;
+      this.container.innerHTML = ICONS.expand;
+      this.container.title = 'Show tagging controls';
       this.container.onclick = (e) => {
         e.stopPropagation();
         this.isPinned = true;
@@ -190,6 +197,9 @@ export class PlayerBar {
 
     const hasSelection = this.startMarker !== null;
     const isEditing = !!this.editingSegmentId;
+    const editingIndex = isEditing ? this.segments.findIndex((s) => s.id === this.editingSegmentId) + 1 : 0;
+    const editingSegment = isEditing ? this.segments[editingIndex - 1] : undefined;
+    const editingColor = this.categories.find((c) => c.id === editingSegment?.categories[0])?.color || '#38bdf8';
 
     let catName = 'None';
     let catColor = '#94a3b8';
@@ -207,58 +217,63 @@ export class PlayerBar {
       currentQualityLabel = this.selectedQuality.label || `${this.selectedQuality.height}p`;
     }
 
-    const arrowSvg = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+    const arrowSvg = ICONS.chevronDown;
+    const playIcon = this.videoEl.paused ? ICONS.play : ICONS.pause;
 
-    const playIcon = this.videoEl.paused 
-      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`
-      : `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
 
     this.container.innerHTML = `
       <div class="vdt-seek-container">
         <input type="range" id="vdt-seek-bar" class="vdt-seek-bar" min="0" max="100" value="${this.videoEl.duration ? (this.videoEl.currentTime / this.videoEl.duration * 100) : 0}" step="0.1" />
       </div>
 
-      <div style="display: flex; align-items: center; width: 100%; justify-content: space-between; padding-top: 4px;">
-        
-        <div style="display: flex; align-items: center; gap: 6px;">
-          <button id="vdt-btn-play" class="vdt-btn" style="padding: 5px 8px; color: #fff;" title="Play/Pause">
+      <div class="vdt-bar-row">
+        <div class="vdt-bar-group">
+          <button id="vdt-btn-play" class="vdt-btn vdt-btn-icon" style="color: #fff;" title="Play / pause" aria-label="Play or pause">
             ${playIcon}
           </button>
 
+          <button id="vdt-btn-frame-back" class="vdt-btn vdt-btn-icon vdt-btn-ghost" title="Previous frame  ( , )" aria-label="Previous frame">${ICONS.frameBack}</button>
           <span id="vdt-time-display" class="vdt-time-display">
             ${formatTime(this.videoEl.currentTime)} / ${formatTime(this.videoEl.duration || 0)}
           </span>
+          <button id="vdt-btn-frame-fwd" class="vdt-btn vdt-btn-icon vdt-btn-ghost" title="Next frame  ( . )" aria-label="Next frame">${ICONS.frameForward}</button>
+          ${editingIndex > 0
+            ? `<span class="vdt-editing-chip" style="--vdt-seg-color: ${escapeHtml(editingColor)}" title="Start/end buttons now change segment ${editingIndex}">${ICONS.editing}<span>${editingIndex}</span></span>`
+            : ''}
 
-          <button id="vdt-btn-in" class="vdt-btn" style="margin-left: 8px;" title="Mark Start [">
-            [ ${this.startMarker !== null ? formatTime(this.startMarker) : 'In'}
+          <button id="vdt-btn-in" class="vdt-btn ${this.startMarker !== null ? 'vdt-btn-in-active' : 'vdt-btn-icon'}" style="margin-left: 8px;" title="Mark segment start  ( [ )" aria-label="Mark segment start">
+            ${ICONS.markIn}${this.startMarker !== null ? `<span>${formatTime(this.startMarker)}</span>` : ''}
           </button>
-          <button id="vdt-btn-out" class="vdt-btn" title="Mark End ]">
-            ] ${this.endMarker !== null ? formatTime(this.endMarker) : 'Out'}
+          <button id="vdt-btn-out" class="vdt-btn ${this.endMarker !== null ? 'vdt-btn-out-active' : 'vdt-btn-icon'}" title="Mark segment end  ( ] )" aria-label="Mark segment end">
+            ${ICONS.markOut}${this.endMarker !== null ? `<span>${formatTime(this.endMarker)}</span>` : ''}
           </button>
           
           ${
             hasSelection
-              ? `<button id="vdt-btn-save" class="vdt-btn vdt-btn-primary" title="Save Segment">
-                  ${isEditing ? 'Update' : 'Save'}
+              ? `<button id="vdt-btn-save" class="vdt-btn vdt-btn-primary vdt-btn-icon" title="${isEditing ? 'Done editing' : 'Save segment'}  (Enter)" aria-label="${isEditing ? 'Done editing' : 'Save segment'}">
+                  ${ICONS.check}
                 </button>`
               : ''
           }
           
           ${
             hasSelection || isEditing
-              ? `<button id="vdt-btn-reset" class="vdt-btn" style="padding: 5px 8px; color: #94a3b8;" title="Cancel selection (Esc)">
-                  ${isEditing ? 'Cancel' : 'Clear'}
+              ? `<button id="vdt-btn-reset" class="vdt-btn vdt-btn-icon" style="color: #94a3b8;" title="${isEditing ? 'Stop editing' : 'Clear markers'}  (Esc)" aria-label="${isEditing ? 'Stop editing' : 'Clear markers'}">
+                  ${ICONS.close}
                 </button>`
               : ''
           }
+          ${isEditing
+            ? `<button id="vdt-btn-delete-editing" class="vdt-btn vdt-btn-icon vdt-btn-danger" title="Delete segment ${editingIndex}  (Del)" aria-label="Delete this segment">${ICONS.trash}</button>`
+            : ''}
         </div>
 
-        <div style="display: flex; align-items: center; gap: 6px;">
-          <span style="color: #64748b; font-size: 10px;">Label:</span>
+        <div class="vdt-bar-group vdt-bar-group-end">
+          <span style="color: #64748b; display: inline-flex;" title="Label for the next segment">${ICONS.tag}</span>
           <div class="vdt-popover-container">
             <div id="vdt-cat-trigger" class="vdt-popover-trigger ${this.openPopover === 'category' ? 'active' : ''}">
               <span class="vdt-dot" style="background: ${catColor};"></span>
-              <span>${catName}</span>
+              <span>${escapeHtml(catName)}</span>
               <span style="color: #94a3b8; margin-left: 2px;">${arrowSvg}</span>
             </div>
 
@@ -269,18 +284,19 @@ export class PlayerBar {
                 ${this.categories
                   .map(
                     (c) => `
-                  <div class="vdt-popover-item ${c.id === this.selectedCategoryId ? 'selected' : ''}" data-cat-id="${c.id}">
+                  <div class="vdt-popover-item ${c.id === this.selectedCategoryId ? 'selected' : ''}" data-cat-id="${escapeHtml(c.id)}">
                     <span style="display: flex; align-items: center; gap: 6px;">
-                      <span class="vdt-dot" style="background: ${c.color};"></span>
-                      <span>${c.name}</span>
+                      <span class="vdt-dot" style="background: ${escapeHtml(c.color)};"></span>
+                      <span>${escapeHtml(c.name)}</span>
                     </span>
                   </div>
                 `
                   )
                   .join('')}
-                <div id="vdt-btn-new-cat" class="vdt-popover-item" style="border-top: 1px solid #334155; margin-top: 4px; padding-top: 6px; color: #38bdf8; font-weight: 600;">
-                  + Create Label...
-                </div>
+                <form id="vdt-new-cat-form" class="vdt-new-label">
+                  <input id="vdt-new-cat-input" maxlength="60" placeholder="New label" aria-label="New label name" autocomplete="off" />
+                  <button type="submit" class="vdt-btn vdt-btn-icon vdt-btn-primary" title="Add label" aria-label="Add label">${ICONS.plus}</button>
+                </form>
               </div>
             `
                 : ''
@@ -289,7 +305,7 @@ export class PlayerBar {
 
           <div class="vdt-popover-container" style="margin-left: 4px;">
             <div id="vdt-quality-trigger" class="vdt-popover-trigger ${this.openPopover === 'quality' ? 'active' : ''}">
-              <span>${currentQualityLabel}</span>
+              <span>${escapeHtml(currentQualityLabel)}</span>
               <span style="color: #94a3b8; margin-left: 2px;">${arrowSvg}</span>
             </div>
 
@@ -302,7 +318,7 @@ export class PlayerBar {
                     const isSel = this.selectedQuality?.height === q.height || this.selectedQuality?.variant_url === q.variant_url;
                     return `
                     <div class="vdt-popover-item ${isSel ? 'selected' : ''}" data-q-height="${q.height || 1080}">
-                      <span>${q.label || `${q.height}p`}</span>
+                      <span>${escapeHtml(q.label || `${q.height}p`)}</span>
                     </div>
                   `;
                   })
@@ -313,24 +329,27 @@ export class PlayerBar {
             }
           </div>
 
-          <button id="vdt-btn-drawer" class="vdt-btn" style="border-color: #3b82f6; color: #93c5fd; margin-left: 4px;" title="Segments">
-            Segments (${this.segments.length})
+          <button id="vdt-btn-drawer" class="vdt-btn" style="border-color: #3b82f6; color: #93c5fd; margin-left: 4px;" title="Tagged segments" aria-label="Tagged segments">
+            ${ICONS.layers}<span class="vdt-count">${this.segments.length}</span>
           </button>
 
           <button id="vdt-btn-send" class="vdt-btn vdt-btn-success" ${
             this.segments.length === 0 || this.isSubmitting ? 'disabled' : ''
-          } title="Submit to server">
-            ${this.isSubmitting ? 'Sending...' : 'Send'}
+          } title="${this.isSubmitting ? 'Sending…' : 'Send segments to server'}" aria-label="Send segments to server">
+            ${this.isSubmitting ? `<span class="vdt-spin">${ICONS.loader}</span>` : ICONS.send}
           </button>
           
-          <button id="vdt-btn-pin" class="vdt-btn" style="padding: 5px 8px; color: #94a3b8; font-size: 11px; margin-left: 4px;" title="Hide Player Controls">
-            Hide
+          <button id="vdt-btn-pin" class="vdt-btn vdt-btn-icon" style="color: #94a3b8; margin-left: 4px;" title="Hide tagging controls" aria-label="Hide tagging controls">
+            ${ICONS.minimize}
           </button>
         </div>
       </div>
     `;
 
     this.attachEvents(qualitiesList);
+    if (this.openPopover === 'category') {
+      (this.container.querySelector('#vdt-new-cat-input') as HTMLInputElement | null)?.focus({ preventScroll: true });
+    }
   }
 
   private attachEvents(qualitiesList: VideoQuality[]): void {
@@ -401,13 +420,39 @@ export class PlayerBar {
       });
     });
 
-    this.container.querySelector('#vdt-btn-new-cat')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.openPopover = null;
-      const newLabel = prompt('Enter new label name:');
-      if (newLabel && newLabel.trim()) {
-        this.onCreateCategoryRequest?.(newLabel.trim());
+    const newLabelForm = this.container.querySelector('#vdt-new-cat-form') as HTMLFormElement | null;
+    if (newLabelForm) {
+      const input = newLabelForm.querySelector('input') as HTMLInputElement;
+      // Typing a name must not trigger the page's or the player's shortcuts.
+      for (const type of ['keydown', 'keyup', 'keypress', 'click', 'mousedown']) {
+        newLabelForm.addEventListener(type, (e) => e.stopPropagation());
       }
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          this.openPopover = null;
+          this.render();
+        }
+      });
+      newLabelForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = input.value.trim();
+        if (!name) return;
+        this.openPopover = null;
+        this.onCreateCategoryRequest?.(name);
+      });
+    }
+
+    this.container.querySelector('#vdt-btn-frame-back')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.onStepFrameRequest?.(-1);
+    });
+    this.container.querySelector('#vdt-btn-frame-fwd')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.onStepFrameRequest?.(1);
+    });
+    this.container.querySelector('#vdt-btn-delete-editing')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.onDeleteEditingRequest?.();
     });
 
     this.container.querySelector('#vdt-quality-trigger')?.addEventListener('click', (e) => {
@@ -444,6 +489,11 @@ export class PlayerBar {
       this.isPinned = false;
       this.render();
     });
+  }
+
+  /** The bar's element, so the segments panel can sit right above it. */
+  public get element(): HTMLElement {
+    return this.container;
   }
 
   public destroy(): void {
