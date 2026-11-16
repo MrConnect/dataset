@@ -155,3 +155,16 @@ def test_incomplete_source_requests_verified_upload():
 
     assert failure.code == "SOURCE_INCOMPLETE"
     assert failure.source_required is True
+
+
+def test_incomplete_download_keeps_its_diagnosis_even_with_a_status_code():
+    failure = classify_download_error(
+        ValueError(
+            "Downloaded source is incomplete or mismatched: the server received 0:08 of video from a "
+            "2:26:26 stream. A missing segment requested by the server returned HTTP 403 text/html. "
+            "The stream plays in your browser, so upload the video to continue."
+        )
+    )
+    assert failure.code == "SOURCE_INCOMPLETE"
+    assert "HTTP 403" in str(failure) and "0:08" in str(failure)
+    assert str(failure).count("pload") == 1  # no duplicated advice

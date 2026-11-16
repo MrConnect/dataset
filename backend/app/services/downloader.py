@@ -3,6 +3,7 @@ import logging
 import re
 import time
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 from urllib.parse import urljoin
@@ -25,6 +26,73 @@ DEFAULT_USER_AGENT = (
 
 ProgressCallback = Callable[[int], Awaitable[None]]
 CancelCheck = Callable[[], bool]
+
+
+@dataclass
+class PlaylistInfo:
+    """What a media playlist promises: total length and where each fragment starts."""
+    total_seconds: float
+    fragments: list[tuple[float, str]]  # (start time, absolute URL)
+
+
+# Filled when the media playlist is fetched during resolution, keyed by its
+# URL, so the download can be checked against it without fetching it again.
+_PLAYLIST_INFO: dict[str, PlaylistInfo] = {}
+
+
+def parse_media_playlist(playlist_url: str, text: str) -> PlaylistInfo | None:
+    """Total duration and fragment list of a complete (ENDLIST) media playlist."""
+    if "#EXT-X-ENDLIST" not in text:
+        return None  # live or sliding window: no fixed length to compare with
+    fragments: list[tuple[float, str]] = []
+    position = 0.0
+    pending: float | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("#EXTINF:"):
+            try:
+                pending = float(line[8:].split(",", 1)[0])
+            except ValueError:
+                pending = None
+        elif line and not line.startswith("#") and pending is not None:
+            fragments.append((position, urljoin(playlist_url, line)))
+            position += pending
+            pending = None
+    return PlaylistInfo(position, fragments) if fragments else None
+
+
+def _looks_like_media(head: bytes) -> bool:
+    if len(head) > 376 and head[0] == 0x47 and head[188] == 0x47 and head[376] == 0x47:
+        return True  # MPEG-TS
+    return b"ftyp" in head[:16] or b"moof" in head[:64]  # fragmented MP4
+
+
+async def diagnose_fragment(url: str, headers: dict[str, str]) -> str:
+    """Fetch the start of one fragment with the job's headers and describe the answer."""
+    try:
+        async with guarded_client(headers={**headers, "Range": "bytes=0-4095"}, timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            head = response.content[:4096]
+    except Exception as exc:  # network errors are the diagnosis
+        return f"the request failed ({type(exc).__name__}: {exc})"
+    content_type = response.headers.get("content-type", "unknown type")
+    if _looks_like_media(head):
+        return f"HTTP {response.status_code} {content_type}, real video data"
+    text = head[:200].decode("utf-8", errors="replace").strip().lower()
+    if text.startswith("<!doctype") or text.startswith("<html") or "<html" in text:
+        what = "an HTML page instead of video (the CDN refuses the server: blocked IP, hotlink protection or a bot check)"
+    elif not head:
+        what = "an empty body"
+    else:
+        what = "data that is not video"
+    return f"HTTP {response.status_code} {content_type}: {what}"
+
+
+def _clock(seconds: float) -> str:
+    total = int(round(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
 class DownloadCancelled(Exception):
@@ -200,6 +268,9 @@ class StreamExtractor:
                 # A blocked host here is a policy decision, not a network
                 # hiccup, so it must not be swallowed like the errors above.
                 await StreamExtractor._validate_playlist_hosts(m3u8_url, playlist_text)
+                info = parse_media_playlist(m3u8_url, playlist_text)
+                if info is not None:
+                    _PLAYLIST_INFO[m3u8_url] = info
             return m3u8_url
 
         variants: list[tuple[int, str]] = []
@@ -328,6 +399,7 @@ class VideoDownloader:
         remove_partial_downloads(output_file)
 
         returncode, tool_log = 0, ""
+        playlist = _PLAYLIST_INFO.pop(target_url, None) if is_hls else None
         try:
             if is_hls or is_dash:
                 result = await VideoDownloader._download_via_ffmpeg(
@@ -361,6 +433,33 @@ class VideoDownloader:
                         f"FFmpeg/yt-dlp download failed (code {returncode}):\n{tool_log}"
                     ) from probe_error
                 raise
+
+            if playlist is not None and VideoDownloader._is_short(duration, playlist.total_seconds):
+                logger.warning(
+                    "Job %s: got %.1fs of a %.1fs playlist; retrying one fragment at a time",
+                    job_id, duration, playlist.total_seconds,
+                )
+                remove_partial_downloads(output_file)
+                result = await VideoDownloader._download_via_ffmpeg(
+                    target_url, output_file, req_headers, duration_seconds, progress_callback,
+                    is_hls=True, target_height=target_height, should_cancel=should_cancel, concurrency=1,
+                )
+                returncode, tool_log = result if result is not None else (0, "")
+                duration = await VideoDownloader._probe_media(output_file) if output_file.exists() else 0.0
+                if VideoDownloader._is_short(duration, playlist.total_seconds):
+                    # Ask the CDN for a fragment the file is missing and say what came back.
+                    missing = next(
+                        (url for start, url in playlist.fragments if start > duration + 1),
+                        playlist.fragments[-1][1],
+                    )
+                    diagnosis = await diagnose_fragment(missing, req_headers)
+                    logger.warning("Job %s: incomplete HLS download; missing fragment answered: %s", job_id, diagnosis)
+                    raise ValueError(
+                        "Downloaded source is incomplete or mismatched: the server received "
+                        f"{_clock(duration)} of video from a {_clock(playlist.total_seconds)} stream. "
+                        f"A missing segment requested by the server returned {diagnosis}. "
+                        "The stream plays in your browser, so upload the video to continue."
+                    )
 
             if returncode != 0:
                 needed = required_seconds or duration_seconds
@@ -434,12 +533,18 @@ class VideoDownloader:
                     )
 
     @staticmethod
+    def _is_short(duration: float, expected: float) -> bool:
+        """More than a rounding difference shorter than the playlist promised."""
+        return duration < expected - max(10.0, expected * 0.02)
+
+    @staticmethod
     def _build_download_command(
         url: str,
         destination: Path,
         headers: dict[str, str],
         is_hls: bool,
         target_height: int | None,
+        concurrency: int = 4,
     ) -> list[str]:
         ua = headers.get("User-Agent", DEFAULT_USER_AGENT)
 
@@ -449,7 +554,7 @@ class VideoDownloader:
                 "--newline",
                 "--hls-prefer-native",
                 "--hls-use-mpegts",
-                "--concurrent-fragments", "4",
+                "--concurrent-fragments", str(concurrency),
                 "--retries", "10",
                 "--fragment-retries", "10",
                 "--retry-sleep", "fragment:exp=1:20",
@@ -502,6 +607,7 @@ class VideoDownloader:
         is_hls: bool = False,
         target_height: int | None = None,
         should_cancel: CancelCheck | None = None,
+        concurrency: int = 4,
     ) -> tuple[int, str]:
         """Run yt-dlp (HLS) or ffmpeg (DASH) and supervise it.
 
@@ -510,7 +616,7 @@ class VideoDownloader:
         passes, nothing happens for the stall timeout, or the bytes on disk
         exceed the size limit.
         """
-        cmd = VideoDownloader._build_download_command(url, destination, headers, is_hls, target_height)
+        cmd = VideoDownloader._build_download_command(url, destination, headers, is_hls, target_height, concurrency)
 
         process = await asyncio.create_subprocess_exec(
             *cmd,

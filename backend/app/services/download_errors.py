@@ -18,6 +18,11 @@ def classify_download_error(error: Exception) -> DownloadFailure:
         # A missing ffmpeg/ffprobe is the server's problem; asking the user
         # for another source would send them in the wrong direction.
         return DownloadFailure("SERVER_TOOL_MISSING", "The server cannot process video: ffmpeg/ffprobe is not installed.")
+    if "incomplete or mismatched" in lowered or "no playable video stream" in lowered:
+        # Checked before the HTTP-status rules: these messages carry their own
+        # diagnosis (which may quote a status code) and must reach the user intact.
+        suffix = "" if "upload" in lowered else " Upload a verified source video to continue."
+        return DownloadFailure("SOURCE_INCOMPLETE", f"{message}{suffix}", source_required=True)
     if re.search(r"\b(401|403)\b", message) or "forbidden" in lowered or "access denied" in lowered:
         return DownloadFailure(
             "SOURCE_ACCESS_DENIED",
@@ -30,12 +35,6 @@ def classify_download_error(error: Exception) -> DownloadFailure:
         return DownloadFailure(
             "SOURCE_INVALID",
             "The captured URL did not return playable media. Select another source or upload the video.",
-            source_required=True,
-        )
-    if "incomplete or mismatched" in lowered or "no playable video stream" in lowered:
-        return DownloadFailure(
-            "SOURCE_INCOMPLETE",
-            f"{message} Upload a verified source video to continue.",
             source_required=True,
         )
     return DownloadFailure("SOURCE_DOWNLOAD_FAILED", message)
