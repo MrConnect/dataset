@@ -377,11 +377,13 @@ class JobWorkerQueue:
         check_cancelled()
 
         if required_seconds is not None and probed_duration + 0.05 < required_seconds:
+            captured = (job.media_url or "").split("?")[0].rsplit("/", 1)[-1] or "the captured address"
             raise ValueError(
-                "Downloaded source is incomplete or mismatched: the video is "
-                f"{_format_seconds(probed_duration)} long but the segments go up to "
-                f"{_format_seconds(required_seconds)}. It is probably a different video "
-                "(an ad, a preview or another clip) than the one that was tagged."
+                "Downloaded source is incomplete or mismatched: the captured media "
+                f"({captured}) is {_format_seconds(probed_duration)} long but the segments go up to "
+                f"{_format_seconds(required_seconds)}. The extension captured something other than the "
+                "full video (a single stream segment, an ad or a preview). Reload the page, let the "
+                "video play a few seconds, and send again — or upload the video."
             )
 
         if settings.KEEP_DOWNLOADED_SOURCES and source_path and not source_should_persist:

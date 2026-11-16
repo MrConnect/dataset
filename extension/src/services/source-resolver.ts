@@ -2,9 +2,34 @@ import { DetectedSource, SourceType, VideoQuality } from '../types';
 import { generateId } from '../utils/uuid';
 import { ApiClient } from './api-client';
 
+/** Last path component's extension, lower-case ('' when there is none). */
+function pathExtension(cleanUrl: string): string {
+  const name = cleanUrl.split('/').pop() || '';
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(dot + 1) : '';
+}
+
+// Files a playlist is never named like. Streams often disguise their segments
+// as images (".../hls/720/s_0.jpg"); those are pieces of a stream, not a stream.
+const NOT_A_PLAYLIST = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'ico', 'svg', 'bmp',
+  'ts', 'm4s', 'aac', 'mp3', 'm4a', 'vtt', 'srt', 'key', 'bin', 'dat',
+  'js', 'mjs', 'css', 'html', 'htm', 'json', 'xml', 'woff', 'woff2', 'ttf', 'map',
+]);
+
 export class VideoSourceResolver {
+  /** True for requests that are segments/assets of a stream rather than a playable source. */
+  static isStreamFragment(url: string, contentType?: string): boolean {
+    const cleanUrl = url.toLowerCase().split('?')[0];
+    const ct = (contentType || '').toLowerCase();
+    if (ct.includes('mpegurl') || ct.includes('dash+xml')) return false;
+    if (ct.startsWith('video/mp2t') || ct.startsWith('audio/') || ct.startsWith('image/')) return true;
+    return NOT_A_PLAYLIST.has(pathExtension(cleanUrl));
+  }
+
   static identifyType(url: string, contentType?: string): SourceType | null {
     const cleanUrl = url.toLowerCase().split('?')[0];
+    if (this.isStreamFragment(url, contentType)) return null;
 
     if (contentType) {
       const ct = contentType.toLowerCase();

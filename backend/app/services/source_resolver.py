@@ -109,8 +109,29 @@ class BackendSourceResolver:
             # Media playlist single stream
             qualities = [VideoQualitySchema(height=720, label="Single HLS Stream", variant_url=media_url)]
 
-        duration = playlist.target_duration
+        duration = await BackendSourceResolver._hls_duration(playlist, qualities, headers)
         return qualities, duration
+
+    @staticmethod
+    async def _hls_duration(playlist, qualities: list[VideoQualitySchema], headers: dict[str, str]) -> float | None:
+        """Length of the stream: the sum of its segments (not TARGETDURATION, the longest segment)."""
+        def total(media) -> float | None:
+            if not media.segments or not media.is_endlist:
+                return None  # live / sliding window: no fixed length
+            return round(sum(segment.duration or 0 for segment in media.segments), 3)
+
+        if not playlist.is_variant:
+            return total(playlist)
+        variant_url = next((q.variant_url for q in qualities if q.variant_url), None)
+        if not variant_url:
+            return None
+        try:
+            async with guarded_client(headers=headers, timeout=15.0, follow_redirects=True) as client:
+                resp = await client.get(variant_url)
+                resp.raise_for_status()
+            return total(m3u8.loads(resp.text, uri=variant_url))
+        except Exception:
+            return None
 
     @staticmethod
     async def _resolve_dash(media_url: str, headers: dict[str, str]) -> tuple[list[VideoQualitySchema], float | None]:

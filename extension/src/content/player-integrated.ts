@@ -261,7 +261,17 @@ export class PlayerIntegratedController {
     const bestScore = this.sourceScore(best);
     const currentScore = this.activeSource ? this.sourceScore(this.activeSource) : Number.NEGATIVE_INFINITY;
 
-    if (bestScore < 0 || (this.activeSource && currentScore > bestScore)) return;
+    if (bestScore < 0) {
+      // Nothing detected matches this video. Drop a choice made before the
+      // video's length was known (e.g. a single 8 s stream segment) rather
+      // than sending the wrong media to the server.
+      if (this.activeSource && currentScore < 0) {
+        this.activeSource = null;
+        this.syncComponents();
+      }
+      return;
+    }
+    if (this.activeSource && currentScore > bestScore) return;
     this.activeSource = best;
     if (best.qualities && best.qualities.length > 0) {
       const stillAvailable = this.selectedQuality && best.qualities.some(

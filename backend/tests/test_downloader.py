@@ -163,3 +163,16 @@ async def test_complete_hls_download_is_not_retried(monkeypatch, tmp_path):
         job_id="job_full", media_url=url, media_type="hls", pre_resolved=True,
     )
     assert runs == [4] and duration == 8784.9 and path.exists()
+
+
+@pytest.mark.asyncio
+async def test_hls_length_is_the_sum_of_segments_not_target_duration():
+    import m3u8
+    from app.services.source_resolver import BackendSourceResolver
+
+    media = m3u8.loads(PLAYLIST, uri="https://cdn.example.com/hls/720/index.m3u8")
+    assert media.target_duration == 10
+    assert await BackendSourceResolver._hls_duration(media, [], {}) == 28.091
+
+    live = m3u8.loads(PLAYLIST.replace("#EXT-X-ENDLIST\n", ""), uri="https://cdn.example.com/live.m3u8")
+    assert await BackendSourceResolver._hls_duration(live, [], {}) is None
